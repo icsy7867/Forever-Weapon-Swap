@@ -1,4 +1,4 @@
-# Forever Weapon Swap 1.7.0
+# Forever Weapon Swap 1.8.0
 
 Two compact main-hand/off-hand sets for World of Warcraft: Forever (Interface 16001). No dependencies. Existing 1.0 main-hand choices and position settings are retained.
 
@@ -23,11 +23,17 @@ An **unconfigured off-hand is ignored**: it leaves the existing off-hand alone. 
 
 Weapon sets, the saved pole, position, visibility, size, opacity, and lock state save per character. The weapon panel is 92 × 60 at default scale and grows to 92 × 91 when it shows the off-hand row.
 
+## Weapon enhancements
+
+- Outside combat, hover a saved weapon to see compatible enhancements from your bags. The main-hand drawer opens above its icon and the off-hand drawer opens below. Move over an enhancement for its in-game tooltip and click to use it on that hand.
+- The drawer supports 42 consumables, including standard and special sharpening stones, weightstones, wizard and mana oils, Frost and Shadow Oil, and rogue poison ranks. Standard stones filter by weapon subclass. Poisons appear for rogues. WoW checks any additional requirements when you apply an item.
+- A saved weapon that is unequipped or locked shows a dimmed preview. Equip the saved weapon and wait for the swap to finish before applying anything. Shields, held off-hand items, and empty slots have no drawer. Permanent enchants and ranged scopes are outside this feature.
+
 ## Fishing
 
 - Drag a fishing pole onto the **Fishing** slot beside the weapon sets, or right-click the slot to save the pole you have equipped. Left-click equips the saved pole. Shift-right-click clears it.
 - Hover the pole or chevron to open the lure drawer below Fishing. The icons show stack counts and are sorted strongest first. Hover an icon for its tooltip. Click a lure to apply it when the saved pole is equipped. While the pole is unequipped, the icons are dimmed and cannot apply a lure.
-- The menu supports Aquadynamic Fish Attractor, Bright Baubles, Flesh Eating Worm, Nightcrawlers, Aquadynamic Fish Lens, and Shiny Bauble.
+- The menu supports Aquadynamic Fish Attractor, Bright Baubles, Flesh Eating Worm, Nightcrawlers, Aquadynamic Fish Lens, Shiny Bauble, and “Secret” Bait.
 - The pole and arrow hide when combat starts by default. Hiding the controls leaves your equipped gear in place. Use the cycle key or a direct set key to switch back. In combat the cycle key uses weapon sets only and does nothing if neither is configured.
 
 ## Settings
@@ -94,7 +100,16 @@ Items are stored by item ID. Differently enchanted copies of the same ID cannot 
 
 Automated checks passed in a mock WoW API/frame environment using Lua 5.4. Checks cover the original behavior plus paired sets, shields, held off-hands, dual-wield configurations, partial-set highlighting, optional off-hand behavior, two-handed transitions, command parsing, slash combat guards, native macro export, missing items, and secure toggle target selection.
 
-Run `python3 tests/run.py` from the extracted addon on Linux with `liblua5.4.so.0` installed. The mock suite covers the lure drawer, item placement, delayed off-hand swaps, and recovery when a load or drag overlaps combat. Version 1.7.0 still needs a live WoW check for rendering, input gestures, and combat restrictions. `/console scriptErrors 1` enables Lua error popups.
+Run `python3 tests/run.py` from the extracted addon on Linux with `liblua5.4.so.0` installed. The mock suite covers the lure drawer, item placement, delayed off-hand swaps, and recovery when a load or drag overlaps combat. Version 1.8.0 still needs a live WoW check for rendering, input gestures, and combat restrictions. `/console scriptErrors 1` enables Lua error popups.
+
+## Consumable data
+
+The item list is in `Consumables.lua`. Each entry uses the bag item ID. Ordinary sharpening stones and weightstones share rules based on the target weapon subclass. Special stones have their own entries. Sources for item coverage and compatibility:
+
+- [Method's WoW Forever weapon enhancements](https://www.method.gg/wow-forever/list-of-all-consumables-and-enchants-in-wow-forever#weapon-enhancements)
+- [Legacy of Warcraft's Forever item database](https://legacyofwarcraft.com/db/forever/item/8928.html)
+- [ForeverDB's rogue poison ranks](https://foreverdb.net/class/Rogue/poisons)
+- [LibItemDB's explanation of stone subclass masks](https://www.curseforge.com/wow/addons/libitemdb/files/9208017/additional-files)
 
 ## Development references reviewed
 

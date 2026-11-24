@@ -1,4 +1,4 @@
-local ADDON = ...
+local ADDON, addon = ...
 BINDING_HEADER_FOREVERWEAPONSWAP = "Forever Weapon Swap"
 _G["BINDING_NAME_CLICK ForeverWeaponSwapToggle:LeftButton"] = "Cycle Weapon Sets"
 
@@ -9,16 +9,11 @@ end
 local db, bar, controller, toggle
 local buttons, weaponButtons = {}, {}
 local moving, pendingOffhand
-local fishing, settingsCategory
+local fishing, weaponDrawer, settingsCategory
 local FISHING_SUBCLASS = Enum and Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Fishingpole or 20
-local LURES = {
-    { id = 6533, name = "Aquadynamic Fish Attractor", bonus = 100 },
-    { id = 6532, name = "Bright Baubles", bonus = 75 },
-    { id = 7307, name = "Flesh Eating Worm", bonus = 75 },
-    { id = 6530, name = "Nightcrawlers", bonus = 50 },
-    { id = 6811, name = "Aquadynamic Fish Lens", bonus = 50 },
-    { id = 6529, name = "Shiny Bauble", bonus = 25 },
-}
+-- SpellEquippedItems subclass masks for the standard stones: 33219 and 9264.
+local SHARP = { [0] = true, [1] = true, [6] = true, [7] = true, [8] = true, [15] = true }
+local BLUNT = { [4] = true, [5] = true, [10] = true, [13] = true }
 local QUESTION = 134400
 local MAIN_HAND = 16
 local OFF_HAND = 17
@@ -267,6 +262,7 @@ local function SaveEquipped(index)
     RequestItemLink(main.offhand)
     ConfigureActions()
     UpdateVisuals()
+    if weaponDrawer and weaponDrawer:IsShown() then weaponDrawer:Hide() end
     Message("Saved set " .. index .. ".")
 end
 
@@ -283,6 +279,7 @@ local function Assign(index, id, offhand)
     RequestItemLink(item)
     ConfigureActions()
     UpdateVisuals()
+    if weaponDrawer and weaponDrawer:IsShown() then weaponDrawer:Hide() end
     Message("Set " .. index .. (offhand and " off-hand: " or " main-hand: ") .. (item.link or ("item " .. id)))
     return true
 end
@@ -294,6 +291,7 @@ local function ClearChoice(index, offhand)
     else db.weapons[index] = nil end
     ConfigureActions()
     UpdateVisuals()
+    if weaponDrawer and weaponDrawer:IsShown() then weaponDrawer:Hide() end
 end
 
 local function ReceiveWeapon(button)
@@ -305,8 +303,9 @@ local function ReceiveWeapon(button)
     end
 end
 
-local function Tooltip(button)
-    GameTooltip:SetOwner(button, "ANCHOR_TOP")
+local function Tooltip(button, drawerOpened)
+    local anchor = drawerOpened and not button.isOffhand and "ANCHOR_BOTTOM" or "ANCHOR_TOP"
+    GameTooltip:SetOwner(button, anchor)
     local weapon = Weapon(button.choice, button.isOffhand)
     if weapon then
         GameTooltip:SetItemByID(weapon.id)
@@ -384,46 +383,206 @@ local function EquipPole()
     end
 end
 
-local function PoleReady()
-    local pole = db.fishingPole
-    return pole and EquippedID() == pole.id and not IsInventoryItemLocked(MAIN_HAND)
+local function CursorBusy()
+    local kind = GetCursorInfo()
+    return not Public(kind) or kind ~= nil or (SpellIsTargeting and SpellIsTargeting())
 end
 
-local function RefreshLures()
-    local menu = fishing.menu
-    local ready = PoleReady()
-    local count = 0
+local function FishingTarget()
+    return db.fishingPole, MAIN_HAND
+end
+
+local function WeaponTarget(menu)
+    local button = menu.owner
+    if not button then return end
+    local item = Weapon(button.choice, button.isOffhand)
+    if not item then return end
+    local _, _, _, _, _, class, subclass = C_Item.GetItemInfoInstant(item.id)
+    if class == 2 and (SHARP[subclass] or BLUNT[subclass]) then
+        return item, button.isOffhand and OFF_HAND or MAIN_HAND, subclass
+    end
+end
+
+local function AcceptsEnhancement(entry, subclass, isRogue)
+    if entry.rule == "sharp" then return SHARP[subclass] end
+    if entry.rule == "blunt" then return BLUNT[subclass] end
+    if entry.rule == "poison" then return isRogue end
+    return entry.rule == "melee"
+end
+
+local function DrawerTargetReady(item, slot)
+    return item and EquippedID(slot) == item.id
+        and not IsInventoryItemLocked(slot) and not CursorBusy()
+end
+
+local function ConsumableCount(id)
+    local count = C_Item.GetItemCount(id)
+    if Public(count) and count and count > 0 then return count end
+end
+
+local function RefreshDrawer(menu)
+    local item, slot, subclass = menu.getTarget(menu)
+    local _, class = UnitClass("player")
+    local ready = DrawerTargetReady(item, slot)
+    local visible = {}
+    menu.targetItem = item
+    menu.targetSlot = slot
     for _, row in ipairs(menu.rows) do
-        local total = C_Item.GetItemCount(row.lure.id)
-        local available = Public(total) and total and total > 0
-        if available then
-            row:ClearAllPoints()
-            row:SetPoint("TOPLEFT", 5 + count * 30, -5)
-            row.count:SetText(total)
+        local entry = row.entry
+        local count
+        if slot and (not menu.accepts or menu.accepts(entry, subclass, class == "ROGUE")) then
+            count = ConsumableCount(entry.id)
+        end
+        if count then
+            visible[#visible + 1] = row
+            row.count:SetText(count)
+            row.icon:SetTexture(C_Item.GetItemIconByID(entry.id) or QUESTION)
             row.icon:SetDesaturated(not ready)
             row.icon:SetAlpha(ready and 1 or 0.45)
-            count = count + 1
+            row:SetAttribute("*macrotext1",
+                ("/use [nocombat] item:%d\n/use [nocombat] %d"):format(entry.id, slot))
+        else
+            row:SetAttribute("*macrotext1", nil)
         end
-        row:SetAttribute("*type1", available and ready and "macro" or nil)
-        row:SetShown(available == true)
+        row:SetAttribute("*type1", count and ready and "macro" or nil)
+        row:SetShown(count ~= nil)
     end
+
+    local count = #visible
     local showHint = count == 0 or not ready
+    local columns = math.max(1, math.min(6, count))
+    local height = math.ceil(count / columns) * 30
     menu.status:SetShown(showHint)
-    menu.status:SetText(count == 0 and "No lures in bags" or "Equip pole first")
-    local width = 10 + count * 28 + math.max(count - 1, 0) * 2
-    menu:SetSize(math.max(width, showHint and 104 or 0), (count > 0 and 38 or 6) + (showHint and 16 or 0))
-    -- Center the track as well as its backdrop when the hint is wider than the icons.
-    local offset = (menu:GetWidth() - width) / 2
-    if offset > 0 then
-        local column = 0
-        for _, row in ipairs(menu.rows) do
-            if row:IsShown() then
-                row:ClearAllPoints()
-                row:SetPoint("TOPLEFT", offset + 5 + column * 30, -5)
-                column = column + 1
-            end
-        end
+    if count == 0 then
+        menu.status:SetText(menu.emptyText)
+    elseif not ready then
+        if not item or EquippedID(slot) ~= item.id then menu.status:SetText(menu.equipText)
+        elseif IsInventoryItemLocked(slot) then menu.status:SetText("Wait for the swap")
+        else menu.status:SetText("Clear your cursor") end
     end
+    local width = math.max(8 + columns * 30, showHint and menu.hintWidth or 0)
+    menu:SetSize(width, 8 + height + (showHint and 16 or 0))
+    for index, row in ipairs(visible) do
+        local column = (index - 1) % columns
+        local line = math.floor((index - 1) / columns)
+        local lineColumns = math.min(columns, count - line * columns)
+        local left = (width - lineColumns * 30) / 2 + 1
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", left + column * 30, -5 - line * 30)
+    end
+end
+
+local function RefreshOpenDrawers()
+    if InCombatLockdown() then return end
+    if fishing.menu:IsShown() then RefreshDrawer(fishing.menu) end
+    if weaponDrawer:IsShown() then RefreshDrawer(weaponDrawer) end
+end
+
+local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText, equipText, hintWidth)
+    local menu = CreateFrame("Frame", nil, parent, "BackdropTemplate,SecureHandlerStateTemplate")
+    menu.getTarget, menu.accepts = getTarget, accepts
+    menu.emptyText, menu.equipText, menu.hintWidth = emptyText, equipText, hintWidth
+    menu:SetSize(hintWidth, 24)
+    menu:EnableMouse(true)
+    menu:SetFrameStrata("DIALOG")
+    menu:SetClampedToScreen(true)
+    SetPanelBackdrop(menu)
+    menu:Hide()
+    menu:SetAttribute("_onstate-combat", [[ if newstate == "active" then self:Hide() end ]])
+    RegisterStateDriver(menu, "combat", "[combat] active; idle")
+    menu.status = menu:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    menu.status:SetPoint("BOTTOM", 0, 5)
+    menu.rows = {}
+
+    local closeTimer
+    local function CancelClose()
+        if closeTimer then closeTimer:Cancel(); closeTimer = nil end
+    end
+    function menu:ScheduleClose()
+        if not self:IsShown() then return end
+        CancelClose()
+        closeTimer = C_Timer.NewTimer(0.22, function()
+            closeTimer = nil
+            if not InCombatLockdown() and not self.owner:IsMouseOver() and not self:IsMouseOver() then
+                self:Hide()
+            end
+        end)
+    end
+    function menu:Open(owner)
+        if InCombatLockdown() or CursorBusy() then return end
+        CancelClose()
+        self.owner = owner
+        RefreshDrawer(self)
+        self:Show()
+    end
+    menu:SetScript("OnEnter", CancelClose)
+    menu:SetScript("OnLeave", menu.ScheduleClose)
+    menu:SetScript("OnHide", CancelClose)
+
+    for _, entry in ipairs(entries) do
+        local row = CreateFrame("Button", nil, menu, "SecureActionButtonTemplate")
+        row.entry = entry
+        row:SetSize(28, 28)
+        row.icon = row:CreateTexture(nil, "ARTWORK")
+        row.icon:SetAllPoints()
+        row.count = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.count:SetPoint("BOTTOMRIGHT", -1, 1)
+        row:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+        row:RegisterForClicks("AnyUp", "AnyDown")
+        row:SetAttribute("useOnKeyDown", false)
+        row:Hide()
+        row:SetScript("PreClick", function(self, button, down)
+            if button ~= "LeftButton" or down or InCombatLockdown() then return end
+            local item, slot, subclass = getTarget(menu)
+            local _, class = UnitClass("player")
+            -- Bind the click to the weapon shown when the drawer was refreshed.
+            local ready = menu:IsShown() and self:IsShown()
+                and item == menu.targetItem and slot == menu.targetSlot
+                and DrawerTargetReady(item, slot)
+                and (not accepts or accepts(entry, subclass, class == "ROGUE"))
+                and ConsumableCount(entry.id)
+            self:SetAttribute("*type1", ready and "macro" or nil)
+        end)
+        row:SetScript("OnEnter", function(self)
+            CancelClose()
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetItemByID(entry.id)
+            if entry.bonus then GameTooltip:AddLine("+" .. entry.bonus .. " Fishing", 0.3, 1, 0.3) end
+            GameTooltip:Show()
+        end)
+        row:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+            menu:ScheduleClose()
+        end)
+        row:HookScript("PostClick", function(self, button, down)
+            if button == "LeftButton" and not down and not InCombatLockdown()
+                and self:GetAttribute("*type1") == "macro" then
+                menu:Hide()
+                GameTooltip:Hide()
+            end
+        end)
+        menu.rows[#menu.rows + 1] = row
+    end
+    return menu
+end
+
+local function OpenWeaponDrawer(button)
+    if InCombatLockdown() or CursorBusy() then return end
+    -- Resolve the currently hovered icon before moving the shared drawer.
+    weaponDrawer.owner = button
+    if not WeaponTarget(weaponDrawer) then
+        weaponDrawer:Hide()
+        return
+    end
+    fishing.menu:Hide()
+    weaponDrawer:ClearAllPoints()
+    if button.isOffhand then
+        weaponDrawer:SetPoint("TOP", button, "BOTTOM", 0, -3)
+    else
+        weaponDrawer:SetPoint("BOTTOM", button, "TOP", 0, 3)
+    end
+    weaponDrawer:Open(button)
+    return true
 end
 
 local function CreateFishing()
@@ -479,84 +638,18 @@ local function CreateFishing()
     end)
     pole:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-    local menu = CreateFrame("Frame", nil, fishing, "BackdropTemplate,SecureHandlerStateTemplate")
+    local menu = CreateItemDrawer(fishing, addon.Lures, FishingTarget, nil,
+        "No lures in bags", "Equip pole first", 104)
     fishing.menu = menu
-    menu:SetSize(104, 22)
     menu:SetPoint("TOP", fishing, "BOTTOM", 0, -3)
-    menu:EnableMouse(true)
-    menu:SetFrameStrata("DIALOG")
-    menu:SetClampedToScreen(true)
-    SetPanelBackdrop(menu)
-    menu:Hide()
-    menu:SetAttribute("_onstate-combat", [[ if newstate == "active" then self:Hide() end ]])
-    RegisterStateDriver(menu, "combat", "[combat] active; idle")
-    menu.status = menu:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    menu.status:SetPoint("BOTTOM", 0, 5)
-    menu.rows = {}
-
-    local closeTimer
-    local function CancelClose()
-        if closeTimer then closeTimer:Cancel(); closeTimer = nil end
-    end
     local function OpenDrawer()
-        CancelClose()
-        if InCombatLockdown() or CursorItemID() then return end
-        RefreshLures()
-        menu:Show()
+        if InCombatLockdown() or CursorBusy() then return end
+        weaponDrawer:Hide()
+        -- The pole and chevron share one hover region.
+        menu:Open(fishing)
     end
-    local function ScheduleClose()
-        CancelClose()
-        closeTimer = C_Timer.NewTimer(0.22, function()
-            closeTimer = nil
-            if not InCombatLockdown() and not fishing:IsMouseOver() and not menu:IsMouseOver() then
-                menu:Hide()
-            end
-        end)
-    end
-    menu:SetScript("OnEnter", CancelClose)
-    menu:SetScript("OnLeave", ScheduleClose)
-    menu:SetScript("OnHide", CancelClose)
     pole:HookScript("OnEnter", OpenDrawer)
-    pole:HookScript("OnLeave", ScheduleClose)
-
-    for _, lure in ipairs(LURES) do
-        local row = CreateFrame("Button", nil, menu, "SecureActionButtonTemplate")
-        row.lure = lure
-        row:SetSize(28, 28)
-        row.icon = row:CreateTexture(nil, "ARTWORK")
-        row.icon:SetAllPoints()
-        row.icon:SetTexture(C_Item.GetItemIconByID(lure.id) or QUESTION)
-        row.count = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        row.count:SetPoint("BOTTOMRIGHT", -1, 1)
-        row:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-        row:RegisterForClicks("AnyUp", "AnyDown")
-        row:SetAttribute("useOnKeyDown", false)
-        row:SetAttribute("*type1", "macro")
-        row:SetAttribute("*macrotext1", "/use [nocombat] item:" .. lure.id .. "\n/use [nocombat] 16")
-        row:SetScript("PreClick", function(self, button, down)
-            if button ~= "LeftButton" or down or InCombatLockdown() then return end
-            local hasLure = C_Item.GetItemCount(self.lure.id)
-            local ready = PoleReady() and not CursorItemID() and Public(hasLure) and hasLure and hasLure > 0
-            self:SetAttribute("*type1", ready and "macro" or nil)
-        end)
-        row:SetScript("OnEnter", function(self)
-            CancelClose()
-            GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            GameTooltip:SetItemByID(self.lure.id)
-            GameTooltip:AddLine("+" .. self.lure.bonus .. " Fishing", 0.3, 1, 0.3)
-            GameTooltip:Show()
-        end)
-        row:SetScript("OnLeave", function()
-            GameTooltip:Hide()
-            ScheduleClose()
-        end)
-        row:HookScript("PostClick", function(_, mouseButton, down)
-            if mouseButton == "LeftButton" and not down and not InCombatLockdown() and PoleReady() then
-                menu:Hide()
-            end
-        end)
-        menu.rows[#menu.rows + 1] = row
-    end
+    pole:HookScript("OnLeave", function() menu:ScheduleClose() end)
 
     local arrow = CreateFrame("Button", "ForeverWeaponSwapLures", fishing)
     arrow:SetPoint("LEFT", pole, "RIGHT", 1, 0)
@@ -565,7 +658,7 @@ local function CreateFishing()
     arrow:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
     arrow:SetScript("OnClick", OpenDrawer)
     arrow:SetScript("OnEnter", OpenDrawer)
-    arrow:SetScript("OnLeave", ScheduleClose)
+    arrow:SetScript("OnLeave", function() menu:ScheduleClose() end)
     ApplyAppearance()
 end
 
@@ -724,9 +817,18 @@ local function CreateUI()
             end
         end)
         button:SetScript("OnReceiveDrag", ReceiveWeapon)
-        button:SetScript("OnEnter", Tooltip)
-        button:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        button:SetScript("OnEnter", function(self)
+            local drawerOpened = OpenWeaponDrawer(self)
+            Tooltip(self, drawerOpened)
+        end)
+        button:SetScript("OnLeave", function(self)
+            GameTooltip:Hide()
+            if weaponDrawer.owner == self and weaponDrawer:IsShown() then weaponDrawer:ScheduleClose() end
+        end)
     end
+    weaponDrawer = CreateItemDrawer(bar, addon.WeaponEnhancements, WeaponTarget, AcceptsEnhancement,
+        "No compatible items in bags", "Equip weapon first", 174)
+    bar.weaponDrawer = weaponDrawer
     CreateFishing()
     ConfigureActions()
     UpdateVisuals()
@@ -855,7 +957,10 @@ local function Command(text)
     elseif cmd == "show" or cmd == "hide" then
         db.hidden = cmd == "hide"
         bar:SetShown(not db.hidden)
-        if db.hidden then fishing.menu:Hide() end
+        if db.hidden then
+            fishing.menu:Hide()
+            weaponDrawer:Hide()
+        end
     else Message("Use /fws help.") end
 end
 
@@ -899,7 +1004,7 @@ events:SetScript("OnEvent", function(_, event, arg1)
         pendingOffhand = nil
     elseif event == "ITEM_LOCK_CHANGED" then
         FinishOffhandSwap()
-        if not InCombatLockdown() and fishing.menu:IsShown() then RefreshLures() end
+        RefreshOpenDrawers()
     elseif event == "CURSOR_CHANGED" then
         UpdateOffhandVisibility()
     elseif event == "SPELL_UPDATE_COOLDOWN" or event == "ACTIONBAR_UPDATE_COOLDOWN" then
@@ -923,7 +1028,7 @@ events:SetScript("OnEvent", function(_, event, arg1)
         bagItems = nil
         UpdateVisuals()
         SyncToggle()
-        if not InCombatLockdown() and fishing.menu:IsShown() then RefreshLures() end
+        RefreshOpenDrawers()
     elseif event == "PLAYER_REGEN_ENABLED" then
         FinishMoving()
         ApplyAppearance()
@@ -932,7 +1037,7 @@ events:SetScript("OnEvent", function(_, event, arg1)
     elseif event ~= "PLAYER_EQUIPMENT_CHANGED" or arg1 == MAIN_HAND or arg1 == OFF_HAND then
         bagItems = nil
         if event == "PLAYER_EQUIPMENT_CHANGED" then FinishOffhandSwap() end
-        if not InCombatLockdown() and fishing.menu:IsShown() then RefreshLures() end
+        RefreshOpenDrawers()
         UpdateVisuals()
         SyncToggle()
     end

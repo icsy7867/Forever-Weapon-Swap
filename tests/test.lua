@@ -93,6 +93,9 @@ local function RunTimers(maxDelay)
     end
 end
 local lureCounts = {}
+local playerClass = "WARRIOR"
+function UnitClass() return playerClass, playerClass end
+local weaponSubclass = { [100] = 8, [200] = 7, [300] = 4, [600] = 15, [700] = 20 }
 function IsInventoryItemLocked(slot) return locked == slot end
 function GetInventoryItemTexture(_,slot) return slot==17 and unknownOff or nil end
 function GetInventoryItemID(_,slot) if slot==17 then return equippedOff else return equipped end end
@@ -103,7 +106,7 @@ C_Item = {
  EquipItemByName=function(item,slot) assert(not combat, 'slash combat equip'); if slot==16 then
     if asyncEquip then queuedMain=tonumber(item:match('item:(%d+)')); return end
     equipped=tonumber(item:match('item:(%d+)')); if metadata[equipped]=='INVTYPE_2HWEAPON' then equippedOff=nil end else equippedOff=tonumber(item:match('item:(%d+)')) end end,
- GetItemInfoInstant=function(id) return id,'Weapon','Weapon',metadata[id],123, (id == 400 or id == 500) and 4 or 2, id == 700 and 20 or nil end,
+ GetItemInfoInstant=function(id) return id,'Weapon','Weapon',metadata[id],123, (id == 400 or id == 500) and 4 or 2, weaponSubclass[id] end,
  GetItemInfo=function(id) if not lureCounts[id] and id ~= missingLink then return 'Weapon '..id, 'item:'..id end end,
  RequestLoadItemDataByID=function(id) itemRequests[id]=true end,
  GetItemCount=function(id) return lureCounts[id] or 0 end,
@@ -156,12 +159,19 @@ Settings = {
  OpenToCategory = function(id) openedCategory = id end,
 }
 GameTooltip=setmetatable({}, {__index=function() return noop end})
-assert(loadfile(addonSource))('ForeverWeaponSwap')
+local function LoadAddon()
+    local namespace = {}
+    local dataSource = addonSource:gsub("ForeverWeaponSwap%.lua$", "Consumables.lua")
+    assert(loadfile(dataSource))("ForeverWeaponSwap", namespace)
+    assert(loadfile(addonSource))("ForeverWeaponSwap", namespace)
+end
+LoadAddon()
 local eventFrame = frames[1]
 local function event(e,arg) eventFrame.scripts.OnEvent(eventFrame,e,arg) end
 event('ADDON_LOADED','ForeverWeaponSwap')
 local one,two,toggle=ForeverWeaponSwapChoice1,ForeverWeaponSwapChoice2,ForeverWeaponSwapToggle
 local control=ForeverWeaponSwapController
+local appliedItem, appliedSlot
 local function click(button, mouse, down, fail)
  mouse = mouse or 'LeftButton'
  if button.scripts.PreClick then button.scripts.PreClick(button,mouse,down) end
@@ -175,6 +185,8 @@ local function click(button, mouse, down, fail)
  if not cancelled and not down and mouse=='LeftButton' and button.attrs['*type1']=='macro' then
    local macro=button.attrs['*macrotext1']
    if macro and not fail then
+     local item, useSlot = macro:match('/use %[%s*nocombat%] item:(%d+)\n/use %[%s*nocombat%] (%d+)')
+     if item and not combat then appliedItem, appliedSlot = tonumber(item), tonumber(useSlot) end
      for slot,id in macro:gsub('%[nocombat%] ', ''):gmatch('/equipslot (%d+) item:(%d+)') do
        slot,id=tonumber(slot),tonumber(id)
        if slot==16 then equipped=id; if metadata[id]=='INVTYPE_2HWEAPON' then equippedOff=nil end else equippedOff=id end
@@ -480,7 +492,7 @@ assert(not bar.moving and ForeverWeaponSwapDB.position, 'stop deferred drag afte
 
 local priorBar=ForeverWeaponSwapBar
 ChangeCombat(true)
-assert(loadfile(addonSource))('ForeverWeaponSwap')
+LoadAddon()
 local loginFrame=frames[#frames]
 loginFrame.scripts.OnEvent(loginFrame,'ADDON_LOADED','ForeverWeaponSwap')
 assert(loginFrame.events.PLAYER_REGEN_ENABLED and ForeverWeaponSwapBar==priorBar)
@@ -490,3 +502,78 @@ assert(ForeverWeaponSwapBar~=priorBar)
 assert(ForeverWeaponSwapChoice1.attrs['*macrotext1']:find('/equipslot 17 item:400',1,true))
 assert(ForeverWeaponSwapController.attrs.weapon1, 'combat toggle configured after deferral')
 io.write('PASS: drawer hover and disabled lures, occupied-slot assignment, item cache, async off-hand equip, combat login/drag recovery\n')
+
+-- Each enhancement drawer resolves a hand, filters by weapon class, and rechecks on click.
+local mainButton, offButton = ForeverWeaponSwapChoice1, ForeverWeaponSwapOffhand1
+local drawer = ForeverWeaponSwapBar.weaponDrawer
+local fishDrawer = ForeverWeaponSwapFishing.menu
+local function Row(menu, id)
+    for _, row in ipairs(menu.rows) do
+        if row.entry.id == id then return row end
+    end
+    error("missing catalog item " .. id)
+end
+assert(#drawer.rows == 42, "all catalog rows loaded")
+local sharp = Row(drawer, 12404)
+local blunt = Row(drawer, 12643)
+local oil = Row(drawer, 20749)
+local poison = Row(drawer, 8928)
+local elemental = Row(drawer, 18262)
+local bait = Row(fishDrawer, 268880)
+lureCounts[12404], lureCounts[12643], lureCounts[20749] = 8, 3, 1
+lureCounts[8928], lureCounts[18262], lureCounts[268880] = 2, 4, 1
+
+-- A mace and its shield were saved by the prior scenario.
+equipped, equippedOff = 300, 400
+mainButton.scripts.OnEnter(mainButton)
+assert(drawer.shown and blunt.shown and oil.shown and elemental.shown)
+assert(not sharp.shown and not poison.shown and blunt.count.text == 3)
+click(blunt)
+assert(appliedItem == 12643 and appliedSlot == 16 and not drawer.shown)
+offButton.scripts.OnEnter(offButton)
+assert(not drawer.shown, "shield has no drawer")
+
+-- A dagger is saved and equipped in the off-hand. A rogue can use poison.
+cursor=600
+offButton.scripts.OnReceiveDrag(offButton)
+equippedOff=600
+playerClass="ROGUE"
+offButton.scripts.OnEnter(offButton)
+assert(drawer.shown and sharp.shown and poison.shown and oil.shown and not blunt.shown)
+click(poison)
+assert(appliedItem == 8928 and appliedSlot == 17)
+
+-- Swapping away between opening and clicking must not consume an item.
+offButton.scripts.OnEnter(offButton)
+equippedOff=400
+appliedItem, appliedSlot = nil, nil
+click(sharp)
+assert(not appliedItem and not sharp.attrs['*type1'])
+local activeEvents
+for _, frame in ipairs(frames) do
+    if frame.events.ITEM_LOCK_CHANGED then activeEvents=frame end
+end
+activeEvents.scripts.OnEvent(activeEvents,"PLAYER_EQUIPMENT_CHANGED",17)
+assert(sharp.shown and sharp.icon.desaturated and drawer.status.text=="Equip weapon first")
+equippedOff=600
+activeEvents.scripts.OnEvent(activeEvents,"PLAYER_EQUIPMENT_CHANGED",17)
+locked=17
+click(sharp)
+assert(not appliedItem, "cannot apply while hand is locked")
+locked=nil
+cursor=100
+click(sharp)
+assert(not appliedItem, "cannot apply while holding an item")
+cursor=nil
+ChangeCombat(true)
+assert(not drawer.shown)
+click(sharp)
+assert(not appliedItem, "enhancements never apply in combat")
+ChangeCombat(false)
+
+equipped=700
+ForeverWeaponSwapLures.scripts.OnEnter(ForeverWeaponSwapLures)
+assert(fishDrawer.shown and bait.shown and bait.attrs['*type1']=='macro')
+click(bait)
+assert(appliedItem == 268880 and appliedSlot == 16)
+io.write("PASS: 42 enhancement IDs, sharp/blunt filtering, rogue gating, correct hands, stale/locked/cursor/combat guards, and Secret Bait\n")

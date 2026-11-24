@@ -1,8 +1,9 @@
 ## Interface: 16001
 ## Title: Forever Weapon Swap
-## Notes: Two weapon sets, a fishing pole slot with lures, and a toggle keybind.
+## Notes: Weapon sets with temporary enhancements, plus a fishing pole and lure drawer.
 ## Author: Wesley Stewart
-## Version: 1.7.0
+## Version: 1.8.0
 ## SavedVariablesPerCharacter: ForeverWeaponSwapDB
 
+Consumables.lua
 ForeverWeaponSwap.lua
