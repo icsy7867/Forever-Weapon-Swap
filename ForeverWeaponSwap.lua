@@ -1,0 +1,939 @@
+local ADDON = ...
+BINDING_HEADER_FOREVERWEAPONSWAP = "Forever Weapon Swap"
+_G["BINDING_NAME_CLICK ForeverWeaponSwapToggle:LeftButton"] = "Cycle Weapon Sets"
+
+for index = 1, 2 do
+    _G["BINDING_NAME_CLICK ForeverWeaponSwapChoice" .. index .. ":LeftButton"] = "Equip Weapon Set " .. index
+end
+
+local db, bar, controller, toggle
+local buttons, weaponButtons = {}, {}
+local moving, pendingOffhand
+local fishing, settingsCategory
+local FISHING_SUBCLASS = Enum and Enum.ItemWeaponSubclass and Enum.ItemWeaponSubclass.Fishingpole or 20
+local LURES = {
+    { id = 6533, name = "Aquadynamic Fish Attractor", bonus = 100 },
+    { id = 6532, name = "Bright Baubles", bonus = 75 },
+    { id = 7307, name = "Flesh Eating Worm", bonus = 75 },
+    { id = 6530, name = "Nightcrawlers", bonus = 50 },
+    { id = 6811, name = "Aquadynamic Fish Lens", bonus = 50 },
+    { id = 6529, name = "Shiny Bauble", bonus = 25 },
+}
+local QUESTION = 134400
+local MAIN_HAND = 16
+local OFF_HAND = 17
+local GCD_SPELL = 61304
+local CLASSIC_GCD_SPELL = 29515
+local COMPACT_HEIGHT = 60
+local EXPANDED_HEIGHT = 91
+local offhandLocations = { INVTYPE_WEAPON = true, INVTYPE_WEAPONOFFHAND = true, INVTYPE_SHIELD = true, INVTYPE_HOLDABLE = true }
+local function Weapon(index, offhand)
+    local set = db.weapons[index]
+    if offhand then return set and set.offhand end
+    return set
+end
+local validLocations = { INVTYPE_WEAPON = true, INVTYPE_WEAPONMAINHAND = true, INVTYPE_2HWEAPON = true }
+
+local function Message(text)
+    print("|cffffd100Weapon Swap:|r " .. text)
+end
+
+local function Public(value)
+    return not issecretvalue or not issecretvalue(value)
+end
+
+local function CursorItemID()
+    local kind, id = GetCursorInfo()
+    if Public(kind) and kind == "item" and Public(id) then return id end
+end
+
+local function UpdateOffhandVisibility()
+    -- Changing the visibility or size of secure frames requires leaving combat.
+    if InCombatLockdown() then return end
+
+    local id = CursorItemID()
+    local eligible
+    if id then
+        local _, _, _, location, _, class = C_Item.GetItemInfoInstant(id)
+        eligible = offhandLocations[location] and (class == 2 or class == 4)
+    end
+    local expanded = false
+    for index = 1, 2 do
+        local main = Weapon(index, false)
+        local show = main and main.offhand ~= nil
+        if not show and eligible and main and main.id ~= id then
+            local _, _, _, location = C_Item.GetItemInfoInstant(main.id)
+            show = location ~= nil and location ~= "INVTYPE_2HWEAPON"
+        end
+        local button = buttons[index].offhandButton
+        if button:IsShown() ~= (show == true) then button:SetShown(show == true) end
+        if show then expanded = true end
+    end
+    local height = expanded and EXPANDED_HEIGHT or COMPACT_HEIGHT
+    if bar:GetHeight() ~= height then bar:SetHeight(height) end
+end
+
+local function EquippedID(slot)
+    local id = GetInventoryItemID("player", slot or MAIN_HAND)
+    if Public(id) then return id end
+end
+
+local function IsFishingPole(id)
+    if not id then return false end
+    local _, _, _, _, _, class, subclass = C_Item.GetItemInfoInstant(id)
+    return class == 2 and subclass == FISHING_SUBCLASS
+end
+
+local function IsWeaponSet(index)
+    local set = db.weapons[index]
+    return set and set.id and not IsFishingPole(set.id)
+end
+
+local function EquippedChoice()
+    local id = EquippedID()
+    local fallback
+    for i = 1, 2 do
+        local set = db.weapons[i]
+        if set and set.id == id then
+            if set.offhand and set.offhand.id == EquippedID(OFF_HAND) then return i end
+            if not set.offhand and not fallback then fallback = i end
+        end
+    end
+    return fallback
+end
+
+local bagItems
+
+local function Carried(id)
+    if EquippedID() == id or EquippedID(OFF_HAND) == id then return true end
+    if not bagItems then
+        bagItems = {}
+        for bag = 0, NUM_BAG_SLOTS or 4 do
+            for slot = 1, C_Container.GetContainerNumSlots(bag) do
+                local item = C_Container.GetContainerItemID(bag, slot)
+                if Public(item) and item then bagItems[item] = true end
+            end
+        end
+    end
+    return bagItems[id] == true
+end
+
+local function UpdateGlobalCooldown()
+    local duration
+    if C_Spell.GetSpellCooldownDuration then
+        -- Some Forever builds expose the Classic dummy spell instead of 61304.
+        local spell = GCD_SPELL
+        if C_Spell.DoesSpellExist and not C_Spell.DoesSpellExist(spell) then
+            spell = CLASSIC_GCD_SPELL
+        end
+        duration = C_Spell.GetSpellCooldownDuration(spell)
+    end
+    for _, button in ipairs(weaponButtons) do
+        local cooldown = button.cooldown
+        if duration and Weapon(button.choice, button.isOffhand) then
+            -- The widget can render restricted timing without reading it in Lua.
+            cooldown:SetCooldownFromDurationObject(duration, true)
+        else
+            cooldown:Clear()
+        end
+    end
+end
+
+local function UpdateFishingIcon()
+    local pole = db.fishingPole
+    local present = pole and Carried(pole.id)
+    local selected = pole and EquippedID() == pole.id
+    local button = fishing.pole
+    button.icon:SetTexture(pole and C_Item.GetItemIconByID(pole.id) or 132932)
+    button.icon:SetDesaturated(pole ~= nil and not present)
+    button.icon:SetAlpha(pole and (present and 1 or 0.4) or 0.5)
+    if selected then
+        button.border:SetColorTexture(1, 0.82, 0, 1)
+    else
+        button.border:SetColorTexture(0.3, 0.3, 0.3, 1)
+    end
+end
+
+local function UpdateVisuals()
+    if not db then return end
+    local equipped = EquippedChoice()
+    for _, button in ipairs(weaponButtons) do
+        local weapon = Weapon(button.choice, button.isOffhand)
+        local texture = weapon and C_Item.GetItemIconByID(weapon.id)
+        button.icon:SetTexture(texture or QUESTION)
+        local present = weapon and Carried(weapon.id)
+        button.icon:SetDesaturated(weapon ~= nil and not present)
+        button.icon:SetAlpha(weapon and (present and 1 or 0.4) or 0.35)
+        local selected = equipped == button.choice and weapon ~= nil
+        button.border:SetColorTexture(selected and 1 or 0.3, selected and 0.82 or 0.3, selected and 0 or 0.3, 1)
+        button.selected:SetShown(selected)
+    end
+    UpdateOffhandVisibility()
+    UpdateFishingIcon()
+    UpdateGlobalCooldown()
+end
+
+local function MacroText(index)
+    local set = db.weapons[index]
+    if not set or not set.id then return end
+    local text = "/equipslot 16 item:" .. set.id
+    if set.offhand then text = text .. "\n/equipslot 17 item:" .. set.offhand.id end
+    return text
+end
+
+local function NextOutOfCombat()
+    local pole = db.fishingPole
+    local current = EquippedChoice() or 0
+    if pole and EquippedID() == pole.id then current = 3 end
+    for step = 1, 3 do
+        local index = (current + step - 1) % 3 + 1
+        if index == 3 then
+            if db.includeFishingInCycle and current ~= 3 and pole and Carried(pole.id) then
+                return index, "/equipslot [nocombat] 16 item:" .. pole.id
+            end
+        elseif IsWeaponSet(index) then
+            return index, MacroText(index)
+        end
+    end
+end
+
+local function SyncToggle()
+    if InCombatLockdown() then return end
+    controller:SetAttribute("next", EquippedChoice() == 1 and 2 or 1)
+    local _, macro = NextOutOfCombat()
+    controller:SetAttribute("peacefulMacro", macro)
+end
+
+-- Rebuild only outside combat. Secure handlers own the alternating target in combat.
+local function ConfigureActions()
+    if not db or not controller or InCombatLockdown() then return end
+    for i = 1, 2 do
+        local macro = MacroText(i)
+        controller:SetAttribute("weapon" .. i, IsWeaponSet(i) and macro or nil)
+        buttons[i]:SetAttribute("*type1", macro and "macro" or nil)
+        buttons[i]:SetAttribute("*macrotext1", macro)
+        local offhand = buttons[i].offhandButton
+        local offhandMacro = Weapon(i, true) and macro or nil
+        offhand:SetAttribute("*type1", offhandMacro and "macro" or nil)
+        offhand:SetAttribute("*macrotext1", offhandMacro)
+    end
+    SyncToggle()
+end
+
+local function ReadItem(id, offhand, main)
+    if not id then return nil, "No item is equipped in that hand." end
+    local _, _, _, location, _, classID = C_Item.GetItemInfoInstant(id)
+    if offhand then
+        if not main then return nil, "Save the main-hand weapon first." end
+        local _, _, _, mainLocation = C_Item.GetItemInfoInstant(main.id)
+        if mainLocation == "INVTYPE_2HWEAPON" then return nil, "A two-handed weapon cannot have an off-hand." end
+        if not offhandLocations[location] or (classID ~= 2 and classID ~= 4) then
+            return nil, "Choose an off-hand weapon, shield, or held off-hand item."
+        end
+        if main.id == id then return nil, "Two copies of the same item ID are unsupported in one set." end
+    elseif IsFishingPole(id) then
+        return nil, "Save fishing poles in the Fishing slot."
+    elseif classID ~= 2 or not validLocations[location] then
+        return nil, "Choose a one-handed or two-handed main-hand weapon."
+    end
+    local _, link = C_Item.GetItemInfo(id)
+    return { id = id, link = link }, nil, location
+end
+
+local function RequestItemLink(item)
+    if item and not item.link then C_Item.RequestLoadItemDataByID(item.id) end
+end
+
+local function SaveEquipped(index)
+    for slot = MAIN_HAND, OFF_HAND do
+        if IsInventoryItemLocked(slot) then
+            Message("An item is moving. Wait for the swap to finish and save again.")
+            return
+        end
+    end
+    local main, err = ReadItem(EquippedID(), false)
+    if not main then Message(err); return end
+    local offID = GetInventoryItemID("player", OFF_HAND)
+    if not Public(offID) or (not offID and GetInventoryItemTexture("player", OFF_HAND)) then
+        Message("Off-hand data is unavailable. Try saving again.")
+        return
+    end
+    if offID then
+        main.offhand, err = ReadItem(offID, true, main)
+        if err then Message(err); return end
+    end
+    db.weapons[index] = main
+    RequestItemLink(main)
+    RequestItemLink(main.offhand)
+    ConfigureActions()
+    UpdateVisuals()
+    Message("Saved set " .. index .. ".")
+end
+
+local function Assign(index, id, offhand)
+    if InCombatLockdown() then Message("Set up weapons after combat."); return false end
+    local item, err, location = ReadItem(id, offhand, db.weapons[index])
+    if not item then Message(err); return false end
+    if offhand then db.weapons[index].offhand = item
+    else
+        local old = db.weapons[index]
+        if old and old.offhand and location ~= "INVTYPE_2HWEAPON" and old.offhand.id ~= id then item.offhand = old.offhand end
+        db.weapons[index] = item
+    end
+    RequestItemLink(item)
+    ConfigureActions()
+    UpdateVisuals()
+    Message("Set " .. index .. (offhand and " off-hand: " or " main-hand: ") .. (item.link or ("item " .. id)))
+    return true
+end
+
+local function ClearChoice(index, offhand)
+    if InCombatLockdown() then Message("Set up weapons after combat."); return end
+    if offhand then
+        if db.weapons[index] then db.weapons[index].offhand = nil end
+    else db.weapons[index] = nil end
+    ConfigureActions()
+    UpdateVisuals()
+end
+
+local function ReceiveWeapon(button)
+    if InCombatLockdown() then Message("Set up weapons after combat."); return end
+    local id = CursorItemID()
+    if id and Assign(button.choice, id, button.isOffhand) then
+        ClearCursor()
+        UpdateOffhandVisibility()
+    end
+end
+
+local function Tooltip(button)
+    GameTooltip:SetOwner(button, "ANCHOR_TOP")
+    local weapon = Weapon(button.choice, button.isOffhand)
+    if weapon then
+        GameTooltip:SetItemByID(weapon.id)
+        if not Carried(weapon.id) then GameTooltip:AddLine("Not in your bags or equipped", 1, 0.25, 0.25) end
+    elseif button.isOffhand then
+        GameTooltip:AddLine("Set " .. button.choice .. " optional off-hand", 1, 0.82, 0)
+        GameTooltip:AddLine("Drop the item here to save it", 0.8, 0.8, 0.8)
+        GameTooltip:Show()
+        return
+    else
+        GameTooltip:AddLine("Set " .. button.choice .. " main-hand", 1, 0.82, 0)
+    end
+    GameTooltip:AddLine("Left-click: equip this entire set", 1, 1, 1)
+    GameTooltip:AddLine("Drop a weapon here to save it", 0.8, 0.8, 0.8)
+    GameTooltip:AddLine("Right-click: save the item equipped in this hand", 0.8, 0.8, 0.8)
+    GameTooltip:AddLine("Shift-right-click: clear this slot (main-hand clears set)", 0.8, 0.8, 0.8)
+    GameTooltip:Show()
+end
+
+local function RestorePosition()
+    bar:ClearAllPoints()
+    local p = db.position
+    if p then bar:SetPoint(p.point, UIParent, p.relativePoint, p.x, p.y)
+    else bar:SetPoint("CENTER", UIParent, "CENTER", 0, -160) end
+end
+
+local function SetPanelBackdrop(panel)
+    local white = "Interface\\Buttons\\WHITE8X8"
+    panel:SetBackdrop({ bgFile = white, edgeFile = white, edgeSize = 1 })
+    panel:SetBackdropColor(0.04, 0.04, 0.05, 0.92)
+    panel:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+end
+
+local function ApplyAppearance()
+    if InCombatLockdown() then return end
+    bar:SetScale(db.scale)
+    bar:SetAlpha(db.opacity / 100)
+    if fishing.hideInCombat ~= db.hideFishingInCombat then
+        local rule = db.hideFishingInCombat and "[combat] hide; show" or "show"
+        RegisterStateDriver(fishing, "visibility", rule)
+        fishing.hideInCombat = db.hideFishingInCombat
+    end
+end
+
+local function SavePole(id)
+    if InCombatLockdown() then return false end
+    if not IsFishingPole(id) then
+        Message("Choose a fishing pole.")
+        return false
+    end
+    local _, link = C_Item.GetItemInfo(id)
+    db.fishingPole = { id = id, link = link }
+    RequestItemLink(db.fishingPole)
+    fishing.menu:Hide()
+    UpdateFishingIcon()
+    SyncToggle()
+    return true
+end
+
+local function DropPole()
+    if InCombatLockdown() then return end
+    local id = CursorItemID()
+    if id and SavePole(id) then ClearCursor() end
+end
+
+local function EquipPole()
+    pendingOffhand = nil
+    local pole = db.fishingPole
+    if not pole then
+        Message("Drop a fishing pole onto the Fishing slot.")
+    elseif not Carried(pole.id) then
+        Message("Put your saved fishing pole in your bags first.")
+    elseif EquippedID() ~= pole.id then
+        C_Item.EquipItemByName("item:" .. pole.id, MAIN_HAND)
+    end
+end
+
+local function PoleReady()
+    local pole = db.fishingPole
+    return pole and EquippedID() == pole.id and not IsInventoryItemLocked(MAIN_HAND)
+end
+
+local function RefreshLures()
+    local menu = fishing.menu
+    local ready = PoleReady()
+    local count = 0
+    for _, row in ipairs(menu.rows) do
+        local total = C_Item.GetItemCount(row.lure.id)
+        local available = Public(total) and total and total > 0
+        if available then
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", 5 + count * 30, -5)
+            row.count:SetText(total)
+            row.icon:SetDesaturated(not ready)
+            row.icon:SetAlpha(ready and 1 or 0.45)
+            count = count + 1
+        end
+        row:SetAttribute("*type1", available and ready and "macro" or nil)
+        row:SetShown(available == true)
+    end
+    local showHint = count == 0 or not ready
+    menu.status:SetShown(showHint)
+    menu.status:SetText(count == 0 and "No lures in bags" or "Equip pole first")
+    local width = 10 + count * 28 + math.max(count - 1, 0) * 2
+    menu:SetSize(math.max(width, showHint and 104 or 0), (count > 0 and 38 or 6) + (showHint and 16 or 0))
+    -- Center the track as well as its backdrop when the hint is wider than the icons.
+    local offset = (menu:GetWidth() - width) / 2
+    if offset > 0 then
+        local column = 0
+        for _, row in ipairs(menu.rows) do
+            if row:IsShown() then
+                row:ClearAllPoints()
+                row:SetPoint("TOPLEFT", offset + 5 + column * 30, -5)
+                column = column + 1
+            end
+        end
+    end
+end
+
+local function CreateFishing()
+    fishing = CreateFrame("Frame", "ForeverWeaponSwapFishing", bar, "BackdropTemplate")
+    fishing:SetSize(72, COMPACT_HEIGHT)
+    fishing:SetPoint("TOPLEFT", bar, "TOPLEFT", 95, 0)
+    SetPanelBackdrop(fishing)
+    local heading = fishing:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    heading:SetPoint("TOP", 0, -3)
+    heading:SetText("FISHING")
+
+    local pole = CreateFrame("Button", "ForeverWeaponSwapFishingPole", fishing)
+    fishing.pole = pole
+    pole:SetPoint("TOP", 0, -18)
+    pole:SetSize(36, 36)
+    pole:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    pole:RegisterForDrag("LeftButton")
+    pole.border = pole:CreateTexture(nil, "BACKGROUND")
+    pole.border:SetAllPoints()
+    pole.icon = pole:CreateTexture(nil, "ARTWORK")
+    pole.icon:SetPoint("TOPLEFT", 2, -2)
+    pole.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+    pole:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+    pole:SetScript("OnReceiveDrag", DropPole)
+    pole:SetScript("OnClick", function(_, mouseButton)
+        if InCombatLockdown() then Message("Fishing controls are available outside combat."); return end
+        if mouseButton == "RightButton" then
+            if IsShiftKeyDown() then
+                db.fishingPole = nil
+                fishing.menu:Hide()
+                UpdateFishingIcon()
+                SyncToggle()
+            else
+                SavePole(EquippedID())
+            end
+        elseif CursorItemID() then
+            DropPole()
+        else
+            EquipPole()
+        end
+    end)
+    pole:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        if db.fishingPole then
+            GameTooltip:SetItemByID(db.fishingPole.id)
+            GameTooltip:AddLine("Left-click to equip", 1, 1, 1)
+            GameTooltip:AddLine("Shift-right-click to clear", 0.8, 0.8, 0.8)
+        else
+            GameTooltip:AddLine("Fishing pole", 1, 0.82, 0)
+        end
+        GameTooltip:AddLine("Drop a pole here or right-click to save your equipped pole", 0.8, 0.8, 0.8)
+        GameTooltip:Show()
+    end)
+    pole:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+    local menu = CreateFrame("Frame", nil, fishing, "BackdropTemplate,SecureHandlerStateTemplate")
+    fishing.menu = menu
+    menu:SetSize(104, 22)
+    menu:SetPoint("TOP", fishing, "BOTTOM", 0, -3)
+    menu:EnableMouse(true)
+    menu:SetFrameStrata("DIALOG")
+    menu:SetClampedToScreen(true)
+    SetPanelBackdrop(menu)
+    menu:Hide()
+    menu:SetAttribute("_onstate-combat", [[ if newstate == "active" then self:Hide() end ]])
+    RegisterStateDriver(menu, "combat", "[combat] active; idle")
+    menu.status = menu:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    menu.status:SetPoint("BOTTOM", 0, 5)
+    menu.rows = {}
+
+    local closeTimer
+    local function CancelClose()
+        if closeTimer then closeTimer:Cancel(); closeTimer = nil end
+    end
+    local function OpenDrawer()
+        CancelClose()
+        if InCombatLockdown() or CursorItemID() then return end
+        RefreshLures()
+        menu:Show()
+    end
+    local function ScheduleClose()
+        CancelClose()
+        closeTimer = C_Timer.NewTimer(0.22, function()
+            closeTimer = nil
+            if not InCombatLockdown() and not fishing:IsMouseOver() and not menu:IsMouseOver() then
+                menu:Hide()
+            end
+        end)
+    end
+    menu:SetScript("OnEnter", CancelClose)
+    menu:SetScript("OnLeave", ScheduleClose)
+    menu:SetScript("OnHide", CancelClose)
+    pole:HookScript("OnEnter", OpenDrawer)
+    pole:HookScript("OnLeave", ScheduleClose)
+
+    for _, lure in ipairs(LURES) do
+        local row = CreateFrame("Button", nil, menu, "SecureActionButtonTemplate")
+        row.lure = lure
+        row:SetSize(28, 28)
+        row.icon = row:CreateTexture(nil, "ARTWORK")
+        row.icon:SetAllPoints()
+        row.icon:SetTexture(C_Item.GetItemIconByID(lure.id) or QUESTION)
+        row.count = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        row.count:SetPoint("BOTTOMRIGHT", -1, 1)
+        row:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+        row:RegisterForClicks("AnyUp", "AnyDown")
+        row:SetAttribute("useOnKeyDown", false)
+        row:SetAttribute("*type1", "macro")
+        row:SetAttribute("*macrotext1", "/use [nocombat] item:" .. lure.id .. "\n/use [nocombat] 16")
+        row:SetScript("PreClick", function(self, button, down)
+            if button ~= "LeftButton" or down or InCombatLockdown() then return end
+            local hasLure = C_Item.GetItemCount(self.lure.id)
+            local ready = PoleReady() and not CursorItemID() and Public(hasLure) and hasLure and hasLure > 0
+            self:SetAttribute("*type1", ready and "macro" or nil)
+        end)
+        row:SetScript("OnEnter", function(self)
+            CancelClose()
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetItemByID(self.lure.id)
+            GameTooltip:AddLine("+" .. self.lure.bonus .. " Fishing", 0.3, 1, 0.3)
+            GameTooltip:Show()
+        end)
+        row:SetScript("OnLeave", function()
+            GameTooltip:Hide()
+            ScheduleClose()
+        end)
+        row:HookScript("PostClick", function(_, mouseButton, down)
+            if mouseButton == "LeftButton" and not down and not InCombatLockdown() and PoleReady() then
+                menu:Hide()
+            end
+        end)
+        menu.rows[#menu.rows + 1] = row
+    end
+
+    local arrow = CreateFrame("Button", "ForeverWeaponSwapLures", fishing)
+    arrow:SetPoint("LEFT", pole, "RIGHT", 1, 0)
+    arrow:SetSize(14, 16)
+    arrow:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIcon-ScrollDown-Up")
+    arrow:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+    arrow:SetScript("OnClick", OpenDrawer)
+    arrow:SetScript("OnEnter", OpenDrawer)
+    arrow:SetScript("OnLeave", ScheduleClose)
+    ApplyAppearance()
+end
+
+local function RegisterSettings()
+    settingsCategory = Settings.RegisterVerticalLayoutCategory("Forever Weapon Swap")
+    local function Register(key, label, kind, default)
+        return Settings.RegisterProxySetting(settingsCategory, "FWS_" .. key, kind, label, default,
+            function() return db[key] end,
+            function(value)
+                db[key] = value
+                ApplyAppearance()
+                if key == "includeFishingInCycle" then SyncToggle() end
+            end)
+    end
+    local size = Register("scale", "Size", Settings.VarType.Number, 1)
+    local sizeOptions = Settings.CreateSliderOptions(0.6, 2, 0.05)
+    local opacity = Register("opacity", "Opacity", Settings.VarType.Number, 100)
+    local opacityOptions = Settings.CreateSliderOptions(20, 100, 5)
+    local label = MinimalSliderWithSteppersMixin.Label.Right
+    sizeOptions:SetLabelFormatter(label, function(value) return ("%d%%"):format(math.floor(value * 100 + 0.5)) end)
+    opacityOptions:SetLabelFormatter(label, function(value) return ("%d%%"):format(value) end)
+    Settings.CreateSlider(settingsCategory, size, sizeOptions, "Change the size of the weapon swap bar.")
+    Settings.CreateSlider(settingsCategory, opacity, opacityOptions, "Change how transparent the bar is.")
+    local hide = Register("hideFishingInCombat", "Hide fishing controls in combat", Settings.VarType.Boolean, true)
+    Settings.CreateCheckbox(settingsCategory, hide, "Hide the fishing pole and lure arrow while in combat.")
+    local cycle = Register("includeFishingInCycle", "Include fishing pole in weapon cycle", Settings.VarType.Boolean, true)
+    Settings.CreateCheckbox(settingsCategory, cycle, "Cycle through your fishing pole and weapon sets outside combat.")
+    Settings.RegisterAddOnCategory(settingsCategory)
+end
+
+local function FinishMoving()
+    if not moving or InCombatLockdown() then return end
+    bar:StopMovingOrSizing()
+    moving = nil
+    local point, _, relativePoint, x, y = bar:GetPoint()
+    db.position = { point = point, relativePoint = relativePoint, x = x, y = y }
+end
+
+local function CreateUI()
+    controller = CreateFrame("Frame", "ForeverWeaponSwapController", UIParent, "SecureHandlerBaseTemplate")
+    bar = CreateFrame("Frame", "ForeverWeaponSwapBar", UIParent)
+    bar:SetSize(167, COMPACT_HEIGHT)
+    bar:SetFrameStrata("MEDIUM")
+    bar:SetClampedToScreen(true)
+    bar:SetMovable(true)
+    RestorePosition()
+
+    local weaponBackdrop = CreateFrame("Frame", nil, bar, "BackdropTemplate")
+    weaponBackdrop:SetPoint("TOPLEFT", 0, 0)
+    weaponBackdrop:SetPoint("BOTTOMLEFT", 0, 0)
+    weaponBackdrop:SetWidth(92)
+    weaponBackdrop:SetFrameLevel(bar:GetFrameLevel())
+    SetPanelBackdrop(weaponBackdrop)
+    local handle = CreateFrame("Frame", nil, bar)
+    handle:SetPoint("TOPLEFT", bar, "TOPLEFT", 1, -1)
+    handle:SetPoint("TOPRIGHT", weaponBackdrop, "TOPRIGHT", -1, -1)
+    handle:SetHeight(13)
+    handle:EnableMouse(true)
+    handle:RegisterForDrag("LeftButton")
+    local label = handle:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    label:SetPoint("CENTER")
+    label:SetText("WEAPONS")
+    handle:SetScript("OnDragStart", function()
+        if not InCombatLockdown() and not db.locked then
+            bar:StartMoving()
+            moving = true
+        end
+    end)
+    handle:SetScript("OnDragStop", FinishMoving)
+
+    toggle = CreateFrame("Button", "ForeverWeaponSwapToggle", UIParent, "SecureActionButtonTemplate")
+    toggle:SetSize(1, 1)
+    toggle:SetPoint("TOPLEFT", UIParent, "TOPLEFT", -10, 10)
+    toggle:EnableMouse(false)
+    toggle:RegisterForClicks("AnyUp", "AnyDown")
+    toggle:SetAttribute("useOnKeyDown", false)
+    toggle:SetAttribute("*type1", "macro")
+    toggle:SetScript("PreClick", function(_, button, down)
+        if button == "LeftButton" and not down then pendingOffhand = nil end
+    end)
+    controller:WrapScript(toggle, "OnClick", [[
+        if down or button ~= "LeftButton" then return end
+        if SecureCmdOptionParse("[nocombat] yes") then
+            self:SetAttribute("*macrotext1", control:GetAttribute("peacefulMacro"))
+            return
+        end
+        local target = control:GetAttribute("next") or 1
+        local macro = control:GetAttribute("weapon" .. target)
+        if not macro then
+            target = 3 - target
+            macro = control:GetAttribute("weapon" .. target)
+        end
+        self:SetAttribute("*macrotext1", macro)
+        if macro then control:SetAttribute("next", 3 - target) end
+    ]])
+
+    for n = 1, 4 do
+        local i = n <= 2 and n or n - 2
+        local offhand = n > 2
+        local button = CreateFrame("Button", "ForeverWeaponSwap" .. (offhand and "Offhand" or "Choice") .. i, bar, "SecureActionButtonTemplate")
+        if offhand then buttons[i].offhandButton = button else buttons[i] = button end
+        weaponButtons[#weaponButtons + 1] = button
+        button.choice = i
+        button.isOffhand = offhand
+        button:SetSize(offhand and 26 or 36, offhand and 26 or 36)
+        button:SetPoint("TOPLEFT", (offhand and 12 or 7) + (i - 1) * 42, offhand and -58 or -18)
+        button:RegisterForClicks("AnyUp", "AnyDown")
+        button:RegisterForDrag("LeftButton")
+        button:SetAttribute("useOnKeyDown", false)
+        button:SetAttribute("choice", i)
+        button.border = button:CreateTexture(nil, "BACKGROUND")
+        button.border:SetAllPoints()
+        button.icon = button:CreateTexture(nil, "ARTWORK")
+        button.icon:SetPoint("TOPLEFT", 2, -2)
+        button.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+        button.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+        button.selected = button:CreateTexture(nil, "OVERLAY")
+        button.selected:SetAllPoints(button.icon)
+        button.selected:SetColorTexture(1, 0.82, 0, 0.15)
+        button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
+        -- Keep the display widget separate from the secure action button.
+        local cooldown = CreateFrame("Cooldown", nil, bar, "CooldownFrameTemplate")
+        cooldown:SetAllPoints(button.icon)
+        cooldown:SetFrameLevel(button:GetFrameLevel() + 1)
+        cooldown:EnableMouse(false)
+        cooldown:SetDrawBling(false)
+        cooldown:SetDrawEdge(false)
+        cooldown:SetDrawSwipe(true)
+        cooldown:SetHideCountdownNumbers(true)
+        button.cooldown = cooldown
+        local number = button:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        number:SetPoint("BOTTOMRIGHT", -3, 3)
+        number:SetText(offhand and "OH" or i)
+        button:SetScript("PreClick", function(self, mouseButton, down)
+            if down or mouseButton ~= "LeftButton" or InCombatLockdown() then return end
+            pendingOffhand = nil
+            self:SetAttribute("fwsDrop", CursorItemID() ~= nil)
+        end)
+        controller:WrapScript(button, "OnClick", [[
+            if down or button ~= "LeftButton" then return end
+            if SecureCmdOptionParse("[nocombat] yes") and self:GetAttribute("fwsDrop") then return false end
+            local target = self:GetAttribute("choice")
+            if self:GetAttribute("*type1") == "macro" then
+                control:SetAttribute("next", 3 - target)
+            end
+        ]])
+        button:HookScript("PostClick", function(self, mouseButton, down)
+            if down then return end
+            if mouseButton == "RightButton" then
+                if IsShiftKeyDown() then ClearChoice(self.choice, self.isOffhand)
+                else Assign(self.choice, EquippedID(self.isOffhand and OFF_HAND or MAIN_HAND), self.isOffhand) end
+            elseif mouseButton == "LeftButton" and CursorItemID() then
+                ReceiveWeapon(self)
+            elseif not db.weapons[self.choice] then
+                Message("Drop an item here, or right-click to save the equipped item in this hand.")
+            end
+        end)
+        button:SetScript("OnReceiveDrag", ReceiveWeapon)
+        button:SetScript("OnEnter", Tooltip)
+        button:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    end
+    CreateFishing()
+    ConfigureActions()
+    UpdateVisuals()
+end
+
+-- Custom slash handlers cannot supply secure combat actions. Native macro text
+-- is provided separately for a user-triggered WoW macro.
+local function FinishOffhandSwap()
+    local swap = pendingOffhand
+    if not swap then return end
+    if InCombatLockdown() or db.weapons[swap.index] ~= swap.set or swap.set.offhand ~= swap.offhand then
+        pendingOffhand = nil
+        return
+    end
+    local mainID = EquippedID()
+    if mainID ~= swap.set.id then
+        -- An unrelated main-hand change supersedes this request.
+        if mainID and (swap.sawMain or mainID ~= swap.previousMain) then pendingOffhand = nil end
+        return
+    end
+    swap.sawMain = true
+    if IsInventoryItemLocked(MAIN_HAND) or IsInventoryItemLocked(OFF_HAND) then return end
+    pendingOffhand = nil
+    if EquippedID(OFF_HAND) ~= swap.offhand.id then
+        C_Item.EquipItemByName("item:" .. swap.offhand.id, OFF_HAND)
+    end
+end
+
+local function EquipSet(index)
+    if InCombatLockdown() then Message("Slash equipping is out of combat only. Use the keybind/UI in combat, or /fws macro " .. index .. " to copy a native macro after combat."); return end
+    pendingOffhand = nil
+    local set = db.weapons[index]
+    if not set then Message("Set " .. index .. " is empty."); return end
+    for _, item in ipairs({ set, set.offhand }) do
+        if not Carried(item.id) then
+            Message("Set " .. index .. " is missing " .. (item.link or ("item " .. item.id)) .. ".")
+            return
+        end
+    end
+    local previousMain = EquippedID()
+    if set.offhand and EquippedID(OFF_HAND) ~= set.offhand.id then
+        local swap = { index = index, set = set, offhand = set.offhand, previousMain = previousMain }
+        pendingOffhand = swap
+        C_Timer.After(2, function()
+            if pendingOffhand == swap then
+                pendingOffhand = nil
+                Message("Off-hand swap timed out. Try equipping the set again.")
+            end
+        end)
+    end
+    if previousMain ~= set.id then C_Item.EquipItemByName("item:" .. set.id, MAIN_HAND) end
+    FinishOffhandSwap()
+    UpdateVisuals()
+    SyncToggle()
+end
+
+local function ShowMacro(index)
+    local text = MacroText(index)
+    if not text then Message("Configure set " .. index .. " first."); return end
+    if not bar.macroPanel then
+        local panel = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        bar.macroPanel = panel
+        panel:SetSize(430, 145)
+        panel:SetPoint("CENTER")
+        panel:SetFrameStrata("DIALOG")
+        panel:SetBackdrop({bgFile = "Interface\\Buttons\\WHITE8X8"})
+        panel:SetBackdropColor(0.05, 0.05, 0.05, 1)
+        local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        title:SetPoint("TOP", 0, -12)
+        title:SetText("Copy into a WoW macro (Ctrl+C). Escape to close.")
+        local edit = CreateFrame("EditBox", nil, panel)
+        panel.edit = edit
+        edit:SetMultiLine(true)
+        edit:SetAutoFocus(false)
+        edit:SetFontObject("ChatFontNormal")
+        edit:SetSize(400, 95)
+        edit:SetPoint("TOPLEFT", 15, -35)
+        edit:SetScript("OnEscapePressed", function(self) self:ClearFocus(); panel:Hide() end)
+    end
+    bar.macroPanel:Show()
+    bar.macroPanel.edit:SetText("#showtooltip item:" .. db.weapons[index].id .. "\n" .. text)
+    bar.macroPanel.edit:SetFocus()
+    bar.macroPanel.edit:HighlightText()
+end
+
+local function Command(text)
+    if not bar then return end
+    local cmd, value = text:lower():match("^%s*(%S*)%s*(.-)%s*$")
+    if cmd == "help" or cmd == "" then
+        Message("Drop main-hands into 1/2 and optional off-hands below. /fws equip 1|2, toggle, save 1|2, macro 1|2, settings, lock, unlock, scale 0.6-2, reset, show, hide. Slash equipping is out of combat; use UI/keybind or copied native macros in combat.")
+        return
+    end
+    if cmd == "1" or cmd == "2" or cmd == "equip" then
+        local index = tonumber(cmd == "equip" and value or cmd)
+        if index ~= 1 and index ~= 2 then Message("Use /fws equip 1 or /fws equip 2."); return end
+        EquipSet(index); return
+    elseif cmd == "toggle" then
+        if InCombatLockdown() then Message("Use the weapon cycle key in combat."); return end
+        local index = NextOutOfCombat()
+        if index == 3 then EquipPole()
+        elseif index then EquipSet(index) end
+        return
+    end
+    if cmd == "settings" then Settings.OpenToCategory(settingsCategory:GetID()); return end
+    if InCombatLockdown() then Message("Change settings after combat."); return end
+    if cmd == "save" or cmd == "macro" then
+        local index = tonumber(value)
+        if index ~= 1 and index ~= 2 then Message("Specify set 1 or 2."); return end
+        if cmd == "macro" then ShowMacro(index)
+        else SaveEquipped(index) end
+        return
+    end
+    if cmd == "lock" or cmd == "unlock" then
+        db.locked = cmd == "lock"
+        Message(db.locked and "Position locked." or "Drag the WEAPONS header to move.")
+    elseif cmd == "reset" then
+        db.position, db.scale, db.hidden, db.locked = nil, 1, false, false
+        ApplyAppearance()
+        RestorePosition()
+        bar:Show()
+    elseif cmd == "scale" then
+        local scale = tonumber(value)
+        if not scale or scale < 0.6 or scale > 2 then Message("Use /fws scale 0.6 through 2."); return end
+        db.scale = scale
+        ApplyAppearance()
+    elseif cmd == "show" or cmd == "hide" then
+        db.hidden = cmd == "hide"
+        bar:SetShown(not db.hidden)
+        if db.hidden then fishing.menu:Hide() end
+    else Message("Use /fws help.") end
+end
+
+SLASH_FOREVERWEAPONSWAP1 = "/fws"
+SLASH_FOREVERWEAPONSWAP2 = "/weaponswap"
+SlashCmdList.FOREVERWEAPONSWAP = Command
+
+local events = CreateFrame("Frame")
+local function InitializeUI()
+    CreateUI()
+    RegisterSettings()
+    if db.hidden then bar:Hide() end
+    for _, name in ipairs({
+        "PLAYER_EQUIPMENT_CHANGED", "BAG_UPDATE_DELAYED", "PLAYER_REGEN_DISABLED",
+        "PLAYER_ENTERING_WORLD", "GET_ITEM_INFO_RECEIVED", "SPELL_UPDATE_COOLDOWN",
+        "ACTIONBAR_UPDATE_COOLDOWN", "CURSOR_CHANGED", "ITEM_LOCK_CHANGED",
+    }) do
+        events:RegisterEvent(name)
+    end
+    Message("Ready. /fws help for setup and keybind instructions.")
+end
+
+events:RegisterEvent("ADDON_LOADED")
+events:SetScript("OnEvent", function(_, event, arg1)
+    if event == "ADDON_LOADED" then
+        if arg1 ~= ADDON then return end
+        ForeverWeaponSwapDB = ForeverWeaponSwapDB or {}
+        db = ForeverWeaponSwapDB
+        db.weapons = db.weapons or {}
+        db.scale = tonumber(db.scale) or 1
+        db.scale = math.max(0.6, math.min(2, db.scale))
+        db.opacity = math.max(20, math.min(100, tonumber(db.opacity) or 100))
+        if db.hideFishingInCombat == nil then db.hideFishingInCombat = true end
+        if db.includeFishingInCycle == nil then db.includeFishingInCycle = true end
+        events:UnregisterEvent("ADDON_LOADED")
+        events:RegisterEvent("PLAYER_REGEN_ENABLED")
+        if not InCombatLockdown() then InitializeUI() end
+    elseif not bar then
+        if event == "PLAYER_REGEN_ENABLED" and not InCombatLockdown() then InitializeUI() end
+    elseif event == "PLAYER_REGEN_DISABLED" then
+        pendingOffhand = nil
+    elseif event == "ITEM_LOCK_CHANGED" then
+        FinishOffhandSwap()
+        if not InCombatLockdown() and fishing.menu:IsShown() then RefreshLures() end
+    elseif event == "CURSOR_CHANGED" then
+        UpdateOffhandVisibility()
+    elseif event == "SPELL_UPDATE_COOLDOWN" or event == "ACTIONBAR_UPDATE_COOLDOWN" then
+        UpdateGlobalCooldown()
+    elseif event == "GET_ITEM_INFO_RECEIVED" then
+        if arg1 == CursorItemID() then UpdateOffhandVisibility() end
+        local changed
+        local function UpdateLink(item)
+            if item and item.id == arg1 then
+                if not item.link then
+                    local _, link = C_Item.GetItemInfo(arg1)
+                    item.link = link
+                end
+                changed = true
+            end
+        end
+        UpdateLink(db.fishingPole)
+        for _, button in ipairs(weaponButtons) do UpdateLink(Weapon(button.choice, button.isOffhand)) end
+        if changed then UpdateVisuals() end
+    elseif event == "BAG_UPDATE_DELAYED" then
+        bagItems = nil
+        UpdateVisuals()
+        SyncToggle()
+        if not InCombatLockdown() and fishing.menu:IsShown() then RefreshLures() end
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        FinishMoving()
+        ApplyAppearance()
+        UpdateVisuals()
+        SyncToggle()
+    elseif event ~= "PLAYER_EQUIPMENT_CHANGED" or arg1 == MAIN_HAND or arg1 == OFF_HAND then
+        bagItems = nil
+        if event == "PLAYER_EQUIPMENT_CHANGED" then FinishOffhandSwap() end
+        if not InCombatLockdown() and fishing.menu:IsShown() then RefreshLures() end
+        UpdateVisuals()
+        SyncToggle()
+    end
+end)
