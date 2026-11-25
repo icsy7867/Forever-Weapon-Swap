@@ -172,7 +172,7 @@ event('ADDON_LOADED','ForeverWeaponSwap')
 local one,two,toggle=ForeverWeaponSwapChoice1,ForeverWeaponSwapChoice2,ForeverWeaponSwapToggle
 local control=ForeverWeaponSwapController
 local appliedItem, appliedSlot
-local function click(button, mouse, down, fail)
+local function release(button, mouse, down, fail)
  mouse = mouse or 'LeftButton'
  if button.scripts.PreClick then button.scripts.PreClick(button,mouse,down) end
  local cancelled
@@ -195,6 +195,13 @@ local function click(button, mouse, down, fail)
    end
  end
  if button.scripts.PostClick then button.scripts.PostClick(button,mouse or 'LeftButton',down) end
+end
+local function press(button, mouse)
+    button.scripts.OnMouseDown(button, mouse or 'LeftButton')
+end
+local function click(button, mouse, down, fail)
+    if button.scripts.OnMouseDown then press(button, mouse) end
+    release(button, mouse, down, fail)
 end
 click(one,'RightButton'); assert(ForeverWeaponSwapDB.weapons[1].id==100)
 cursor=200; two.scripts.OnReceiveDrag(two); assert(cursor==nil)
@@ -355,8 +362,8 @@ assert(ForeverWeaponSwapDB.fishingPole.id==700 and not cursor)
 lureCounts[6529], lureCounts[6533] = 3, 2
 hovered[fishingPanel]=true
 pole.scripts.OnEnter(pole)
-assert(menu.shown and menu.status.text=='Equip pole first')
-assert(menu.rows[1].shown and menu.rows[1].icon.desaturated and not menu.rows[1].attrs['*type1'])
+assert(menu.shown and menu.status.text=='Hold to equip')
+assert(menu.rows[1].shown and not menu.rows[1].icon.desaturated and not menu.rows[1].attrs['*type1'])
 hovered[fishingPanel]=nil
 pole.scripts.OnLeave(pole)
 menu.scripts.OnEnter(menu)
@@ -370,14 +377,15 @@ assert(menu.shown)
 pole.scripts.OnClick(pole,'LeftButton')
 event('PLAYER_EQUIPMENT_CHANGED',16)
 assert(equipped==700 and menu.shown and pole.border.color[1]==1)
-assert(not menu.rows[1].icon.desaturated and menu.rows[1].attrs['*type1']=='macro')
+assert(not menu.rows[1].icon.desaturated and menu.status.text=='Click to apply')
 
 lureCounts[6529], lureCounts[6533] = 3, 2
 arrow.scripts.OnClick(arrow)
 assert(menu.shown and menu.rows[1].shown and not menu.rows[2].shown)
 assert(menu.rows[#menu.rows].shown and menu.rows[1].count.text==2)
+click(menu.rows[1])
 assert(menu.rows[1].attrs['*macrotext1']=='/use [nocombat] item:6533\n/use [nocombat] 16')
-menu.rows[1].scripts.PostClick(menu.rows[1],'LeftButton',false)
+assert(appliedItem == 6533 and appliedSlot == 16)
 assert(not menu.shown, 'close menu after selecting lure')
 arrow.scripts.OnClick(arrow)
 lureCounts[6533]=0
@@ -501,7 +509,7 @@ loginFrame.scripts.OnEvent(loginFrame,'PLAYER_REGEN_ENABLED')
 assert(ForeverWeaponSwapBar~=priorBar)
 assert(ForeverWeaponSwapChoice1.attrs['*macrotext1']:find('/equipslot 17 item:400',1,true))
 assert(ForeverWeaponSwapController.attrs.weapon1, 'combat toggle configured after deferral')
-io.write('PASS: drawer hover and disabled lures, occupied-slot assignment, item cache, async off-hand equip, combat login/drag recovery\n')
+io.write('PASS: drawer hover and lure actions, occupied-slot assignment, item cache, async off-hand equip, combat login/drag recovery\n')
 
 -- Each enhancement drawer resolves a hand, filters by weapon class, and rechecks on click.
 local mainButton, offButton = ForeverWeaponSwapChoice1, ForeverWeaponSwapOffhand1
@@ -545,16 +553,17 @@ assert(appliedItem == 8928 and appliedSlot == 17)
 
 -- Swapping away between opening and clicking must not consume an item.
 offButton.scripts.OnEnter(offButton)
+press(sharp)
 equippedOff=400
 appliedItem, appliedSlot = nil, nil
-click(sharp)
+release(sharp)
 assert(not appliedItem and not sharp.attrs['*type1'])
 local activeEvents
 for _, frame in ipairs(frames) do
     if frame.events.ITEM_LOCK_CHANGED then activeEvents=frame end
 end
 activeEvents.scripts.OnEvent(activeEvents,"PLAYER_EQUIPMENT_CHANGED",17)
-assert(sharp.shown and sharp.icon.desaturated and drawer.status.text=="Equip weapon first")
+assert(sharp.shown and sharp.icon.desaturated and drawer.status.text=="Item missing")
 equippedOff=600
 activeEvents.scripts.OnEvent(activeEvents,"PLAYER_EQUIPMENT_CHANGED",17)
 locked=17
@@ -573,7 +582,110 @@ ChangeCombat(false)
 
 equipped=700
 ForeverWeaponSwapLures.scripts.OnEnter(ForeverWeaponSwapLures)
-assert(fishDrawer.shown and bait.shown and bait.attrs['*type1']=='macro')
+assert(fishDrawer.shown and bait.shown and not bait.attrs['*type1'])
 click(bait)
 assert(appliedItem == 268880 and appliedSlot == 16)
 io.write("PASS: 42 enhancement IDs, sharp/blunt filtering, rogue gating, correct hands, stale/locked/cursor/combat guards, and Secret Bait\n")
+
+-- Drive actual press/release edges separately to cover latency and cancellation.
+local function update(e, slot)
+    activeEvents.scripts.OnEvent(activeEvents, e, slot)
+end
+carried = {100, 200, 300, 400, 600, 700}
+update("BAG_UPDATE_DELAYED")
+local function openPole()
+    ForeverWeaponSwapLures.scripts.OnEnter(ForeverWeaponSwapLures)
+end
+equipped, equippedOff = 300, 600
+openPole()
+appliedItem = nil
+press(bait)
+assert(equipped == 700 and not equippedOff and not appliedItem)
+assert(fishDrawer.status.text == "Release to apply")
+release(bait)
+assert(appliedItem == 268880 and appliedSlot == 16 and not fishDrawer.shown)
+
+offButton.scripts.OnEnter(offButton)
+click(poison)
+assert(equipped == 300 and equippedOff == 600 and appliedItem == 8928 and appliedSlot == 17,
+    "off-hand poison restores a usable main hand after fishing")
+
+equipped, equippedOff = 200, 400
+offButton.scripts.OnEnter(offButton)
+click(sharp)
+assert(equipped == 200 and equippedOff == 600 and appliedItem == 12404 and appliedSlot == 17,
+    "an off-hand swap preserves a compatible main hand")
+
+mainButton.scripts.OnEnter(mainButton)
+click(blunt)
+assert(equipped == 300 and equippedOff == 600 and appliedItem == 12643 and appliedSlot == 16)
+
+asyncEquip = true
+openPole()
+appliedItem = nil
+press(bait)
+assert(equipped == 300 and queuedMain == 700 and fishDrawer.status.text == "Wait for the swap")
+release(bait)
+assert(not appliedItem and fishDrawer.shown)
+equipped, equippedOff = queuedMain, nil
+update("PLAYER_EQUIPMENT_CHANGED", 16)
+RunTimers(2)
+assert(not appliedItem and fishDrawer.status.text == "Click to apply", "events and timers never consume")
+click(bait)
+assert(appliedItem == 268880 and appliedSlot == 16)
+
+-- A held press can span both the equipment notification and the final unlock.
+mainButton.scripts.OnEnter(mainButton)
+appliedItem = nil
+press(oil)
+assert(queuedMain == 300)
+equipped, locked = queuedMain, 16
+update("PLAYER_EQUIPMENT_CHANGED", 16)
+assert(drawer.status.text == "Wait for the swap")
+locked = nil
+update("ITEM_LOCK_CHANGED")
+assert(drawer.status.text == "Release to apply" and not appliedItem)
+release(oil)
+assert(appliedItem == 20749 and appliedSlot == 16)
+asyncEquip = false
+
+-- A rejected oil swap must leave another compatible weapon untouched.
+equipped = 200
+mainButton.scripts.OnEnter(mainButton)
+local equip = C_Item.EquipItemByName
+local requested
+C_Item.EquipItemByName = function(item, slot) requested = { item, slot } end
+appliedItem = nil
+click(oil)
+assert(requested[1] == "item:300" and requested[2] == 16)
+assert(equipped == 200 and not appliedItem and drawer.shown)
+C_Item.EquipItemByName = equip
+press(oil)
+assert(equipped == 300)
+locked = 16
+release(oil)
+assert(not appliedItem and drawer.shown)
+locked = nil
+click(oil, "RightButton")
+assert(not appliedItem)
+
+-- Releasing on a different hand, after bag depletion, or across combat cannot apply.
+appliedItem = nil
+mainButton.scripts.OnEnter(mainButton)
+press(oil)
+equippedOff = 600
+offButton.scripts.OnEnter(offButton)
+release(oil)
+assert(not appliedItem)
+press(oil)
+lureCounts[20749] = 0
+release(oil)
+assert(not appliedItem)
+press(poison)
+ChangeCombat(true)
+release(poison)
+ChangeCombat(false)
+offButton.scripts.OnEnter(offButton)
+release(poison)
+assert(not appliedItem)
+io.write("PASS: same-click pole, main-hand and off-hand equip/application, delayed release, retry and cancellation\n")

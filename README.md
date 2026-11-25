@@ -1,4 +1,4 @@
-# Forever Weapon Swap 1.8.0
+# Forever Weapon Swap 1.8.1
 
 Two compact main-hand/off-hand sets for World of Warcraft: Forever (Interface 16001). No dependencies. Existing 1.0 main-hand choices and position settings are retained.
 
@@ -25,14 +25,15 @@ Weapon sets, the saved pole, position, visibility, size, opacity, and lock state
 
 ## Weapon enhancements
 
-- Outside combat, hover a saved weapon to see compatible enhancements from your bags. The main-hand drawer opens above its icon and the off-hand drawer opens below. Move over an enhancement for its in-game tooltip and click to use it on that hand.
+- Outside combat, hover a saved weapon to see compatible enhancements from your bags. The main-hand drawer opens above its icon and the off-hand drawer opens below. Hover an enhancement for its in-game tooltip. Press its icon to equip the saved weapon. Release on the same icon to apply the enhancement to that hand.
 - The drawer supports 42 consumables, including standard and special sharpening stones, weightstones, wizard and mana oils, Frost and Shadow Oil, and rogue poison ranks. Standard stones filter by weapon subclass. Poisons appear for rogues. WoW checks any additional requirements when you apply an item.
-- A saved weapon that is unequipped or locked shows a dimmed preview. Equip the saved weapon and wait for the swap to finish before applying anything. Shields, held off-hand items, and empty slots have no drawer. Permanent enchants and ranged scopes are outside this feature.
+- A quick click works when the swap finishes before release. For a slower swap, hold until the drawer says **Release to apply**. If you release early, click the same consumable again once the drawer says **Click to apply**. WoW handles any confirmation to replace an existing enhancement.
+- An off-hand enhancement normally swaps just the off-hand. If the main hand is empty, holds a two-hander such as a fishing pole, or holds the weapon you want in your off-hand, the addon requests the saved pair first. Missing items and locked hands dim the consumables. Shields, held off-hand items, and empty slots have no drawer. Permanent enchants and ranged scopes are outside this feature.
 
 ## Fishing
 
 - Drag a fishing pole onto the **Fishing** slot beside the weapon sets, or right-click the slot to save the pole you have equipped. Left-click equips the saved pole. Shift-right-click clears it.
-- Hover the pole or chevron to open the lure drawer below Fishing. The icons show stack counts and are sorted strongest first. Hover an icon for its tooltip. Click a lure to apply it when the saved pole is equipped. While the pole is unequipped, the icons are dimmed and cannot apply a lure.
+- Hover the pole or chevron to open the lure drawer below Fishing. The icons show stack counts and are sorted strongest first. Hover an icon for its tooltip. Press a lure to equip the saved pole, then release over that lure to apply it. If the pole is already equipped, click normally. If the swap is slow, hold for **Release to apply** or click again after the pole is ready.
 - The menu supports Aquadynamic Fish Attractor, Bright Baubles, Flesh Eating Worm, Nightcrawlers, Aquadynamic Fish Lens, Shiny Bauble, and “Secret” Bait.
 - The pole and arrow hide when combat starts by default. Hiding the controls leaves your equipped gear in place. Use the cycle key or a direct set key to switch back. In combat the cycle key uses weapon sets only and does nothing if neither is configured.
 
@@ -100,7 +101,7 @@ Items are stored by item ID. Differently enchanted copies of the same ID cannot 
 
 Automated checks passed in a mock WoW API/frame environment using Lua 5.4. Checks cover the original behavior plus paired sets, shields, held off-hands, dual-wield configurations, partial-set highlighting, optional off-hand behavior, two-handed transitions, command parsing, slash combat guards, native macro export, missing items, and secure toggle target selection.
 
-Run `python3 tests/run.py` from the extracted addon on Linux with `liblua5.4.so.0` installed. The mock suite covers the lure drawer, item placement, delayed off-hand swaps, and recovery when a load or drag overlaps combat. Version 1.8.0 still needs a live WoW check for rendering, input gestures, and combat restrictions. `/console scriptErrors 1` enables Lua error popups.
+Run `python3 tests/run.py` from the extracted addon on Linux with `liblua5.4.so.0` installed. The mock suite covers the lure drawer, item placement, delayed off-hand swaps, and recovery when a load or drag overlaps combat. The mock suite also exercises consumable presses and releases with immediate, delayed, and interrupted swaps. Version 1.8.1 still needs a live WoW Forever check for input timing, protected actions, and enchant replacement prompts. `/console scriptErrors 1` enables Lua error popups.
 
 ## Consumable data
 

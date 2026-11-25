@@ -410,9 +410,74 @@ local function AcceptsEnhancement(entry, subclass, isRogue)
     return entry.rule == "melee"
 end
 
-local function DrawerTargetReady(item, slot)
-    return item and EquippedID(slot) == item.id
-        and not IsInventoryItemLocked(slot) and not CursorBusy()
+local function FinishOffhandSwap()
+    local swap = pendingOffhand
+    if not swap then return end
+    if InCombatLockdown() or db.weapons[swap.index] ~= swap.set or swap.set.offhand ~= swap.offhand then
+        pendingOffhand = nil
+        return
+    end
+    local mainID = EquippedID()
+    if mainID ~= swap.set.id then
+        -- An unrelated main-hand change supersedes this request.
+        if mainID and (swap.sawMain or mainID ~= swap.previousMain) then pendingOffhand = nil end
+        return
+    end
+    swap.sawMain = true
+    if IsInventoryItemLocked(MAIN_HAND) or IsInventoryItemLocked(OFF_HAND) then return end
+    pendingOffhand = nil
+    if EquippedID(OFF_HAND) ~= swap.offhand.id then
+        C_Item.EquipItemByName("item:" .. swap.offhand.id, OFF_HAND)
+    end
+end
+
+local function EquipSet(index)
+    if InCombatLockdown() then Message("Slash equipping is out of combat only. Use the keybind/UI in combat, or /fws macro " .. index .. " to copy a native macro after combat."); return end
+    pendingOffhand = nil
+    local set = db.weapons[index]
+    if not set then Message("Set " .. index .. " is empty."); return end
+    for _, item in ipairs({ set, set.offhand }) do
+        if not Carried(item.id) then
+            Message("Set " .. index .. " is missing " .. (item.link or ("item " .. item.id)) .. ".")
+            return
+        end
+    end
+    local previousMain = EquippedID()
+    if set.offhand and EquippedID(OFF_HAND) ~= set.offhand.id then
+        local swap = { index = index, set = set, offhand = set.offhand, previousMain = previousMain }
+        pendingOffhand = swap
+        C_Timer.After(2, function()
+            if pendingOffhand == swap then
+                pendingOffhand = nil
+                Message("Off-hand swap timed out. Try equipping the set again.")
+            end
+        end)
+    end
+    if previousMain ~= set.id then C_Item.EquipItemByName("item:" .. set.id, MAIN_HAND) end
+    FinishOffhandSwap()
+    UpdateVisuals()
+    SyncToggle()
+end
+
+-- A pole, a two-hander, or the target itself in slot 16 may have to move first.
+local function NeedsMainForOffhand(item, slot)
+    if slot ~= OFF_HAND or EquippedID(slot) == item.id then return false end
+    local main = EquippedID(MAIN_HAND)
+    if not main or main == item.id then return true end
+    local _, _, _, location = C_Item.GetItemInfoInstant(main)
+    return location == "INVTYPE_2HWEAPON"
+end
+
+local function DrawerBlockReason(menu, item, slot)
+    if not item or not Carried(item.id) then return "Item missing" end
+    if CursorBusy() then return "Clear your cursor" end
+    if IsInventoryItemLocked(slot) then return "Wait for the swap" end
+    if EquippedID(slot) ~= item.id then
+        if IsInventoryItemLocked(slot == MAIN_HAND and OFF_HAND or MAIN_HAND) then return "Wait for the swap" end
+        if NeedsMainForOffhand(item, slot) and not Carried(Weapon(menu.owner.choice).id) then
+            return "Main hand missing"
+        end
+    end
 end
 
 local function ConsumableCount(id)
@@ -423,7 +488,8 @@ end
 local function RefreshDrawer(menu)
     local item, slot, subclass = menu.getTarget(menu)
     local _, class = UnitClass("player")
-    local ready = DrawerTargetReady(item, slot)
+    local blocked = DrawerBlockReason(menu, item, slot)
+    local equipped = item and EquippedID(slot) == item.id
     local visible = {}
     menu.targetItem = item
     menu.targetSlot = slot
@@ -437,31 +503,24 @@ local function RefreshDrawer(menu)
             visible[#visible + 1] = row
             row.count:SetText(count)
             row.icon:SetTexture(C_Item.GetItemIconByID(entry.id) or QUESTION)
-            row.icon:SetDesaturated(not ready)
-            row.icon:SetAlpha(ready and 1 or 0.45)
-            row:SetAttribute("*macrotext1",
-                ("/use [nocombat] item:%d\n/use [nocombat] %d"):format(entry.id, slot))
-        else
-            row:SetAttribute("*macrotext1", nil)
+            row.icon:SetDesaturated(blocked ~= nil)
+            row.icon:SetAlpha(blocked and 0.45 or 1)
         end
-        row:SetAttribute("*type1", count and ready and "macro" or nil)
         row:SetShown(count ~= nil)
     end
 
     local count = #visible
-    local showHint = count == 0 or not ready
     local columns = math.max(1, math.min(6, count))
     local height = math.ceil(count / columns) * 30
-    menu.status:SetShown(showHint)
-    if count == 0 then
-        menu.status:SetText(menu.emptyText)
-    elseif not ready then
-        if not item or EquippedID(slot) ~= item.id then menu.status:SetText(menu.equipText)
-        elseif IsInventoryItemLocked(slot) then menu.status:SetText("Wait for the swap")
-        else menu.status:SetText("Clear your cursor") end
-    end
-    local width = math.max(8 + columns * 30, showHint and menu.hintWidth or 0)
-    menu:SetSize(width, 8 + height + (showHint and 16 or 0))
+    local hint
+    if count == 0 then hint = menu.emptyText
+    elseif blocked then hint = blocked
+    elseif menu.pressedRow then hint = equipped and "Release to apply" or "Wait for the swap"
+    else hint = equipped and "Click to apply" or "Hold to equip" end
+    menu.status:SetText(hint)
+    -- Keep the row under the pointer when an equipment event changes the hint.
+    local width = math.max(8 + columns * 30, menu.hintWidth)
+    menu:SetSize(width, 24 + height)
     for index, row in ipairs(visible) do
         local column = (index - 1) % columns
         local line = math.floor((index - 1) / columns)
@@ -478,10 +537,10 @@ local function RefreshOpenDrawers()
     if weaponDrawer:IsShown() then RefreshDrawer(weaponDrawer) end
 end
 
-local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText, equipText, hintWidth)
+local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText, hintWidth)
     local menu = CreateFrame("Frame", nil, parent, "BackdropTemplate,SecureHandlerStateTemplate")
     menu.getTarget, menu.accepts = getTarget, accepts
-    menu.emptyText, menu.equipText, menu.hintWidth = emptyText, equipText, hintWidth
+    menu.emptyText, menu.hintWidth = emptyText, hintWidth
     menu:SetSize(hintWidth, 24)
     menu:EnableMouse(true)
     menu:SetFrameStrata("DIALOG")
@@ -511,13 +570,17 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText, 
     function menu:Open(owner)
         if InCombatLockdown() or CursorBusy() then return end
         CancelClose()
+        self.pressedRow = nil
         self.owner = owner
         RefreshDrawer(self)
         self:Show()
     end
     menu:SetScript("OnEnter", CancelClose)
     menu:SetScript("OnLeave", menu.ScheduleClose)
-    menu:SetScript("OnHide", CancelClose)
+    menu:SetScript("OnHide", function(self)
+        self.pressedRow = nil
+        CancelClose()
+    end)
 
     for _, entry in ipairs(entries) do
         local row = CreateFrame("Button", nil, menu, "SecureActionButtonTemplate")
@@ -528,20 +591,43 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText, 
         row.count = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.count:SetPoint("BOTTOMRIGHT", -1, 1)
         row:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-        row:RegisterForClicks("AnyUp", "AnyDown")
+        row:RegisterForClicks("LeftButtonUp")
         row:SetAttribute("useOnKeyDown", false)
         row:Hide()
+
+        local function CurrentTarget()
+            local item, slot, subclass = getTarget(menu)
+            if not item or not menu:IsShown() or not row:IsShown()
+                or item ~= menu.targetItem or slot ~= menu.targetSlot
+                or DrawerBlockReason(menu, item, slot) or not ConsumableCount(entry.id) then return end
+            local _, class = UnitClass("player")
+            if not accepts or accepts(entry, subclass, class == "ROGUE") then return item, slot end
+        end
+
+        row:SetScript("OnMouseDown", function(self, button)
+            if button ~= "LeftButton" or InCombatLockdown() then return end
+            local item, slot = CurrentTarget()
+            menu.pressedRow, menu.pressedItem, menu.pressedSlot = nil, item, slot
+            if not item then return end
+            menu.pressedRow = self
+            pendingOffhand = nil
+            if EquippedID(slot) ~= item.id then
+                if NeedsMainForOffhand(item, slot) then EquipSet(menu.owner.choice)
+                else C_Item.EquipItemByName("item:" .. item.id, slot) end
+            end
+            RefreshDrawer(menu)
+        end)
         row:SetScript("PreClick", function(self, button, down)
             if button ~= "LeftButton" or down or InCombatLockdown() then return end
-            local item, slot, subclass = getTarget(menu)
-            local _, class = UnitClass("player")
-            -- Bind the click to the weapon shown when the drawer was refreshed.
-            local ready = menu:IsShown() and self:IsShown()
-                and item == menu.targetItem and slot == menu.targetSlot
-                and DrawerTargetReady(item, slot)
-                and (not accepts or accepts(entry, subclass, class == "ROGUE"))
-                and ConsumableCount(entry.id)
+            local item, slot = CurrentTarget()
+            local ready = menu.pressedRow == self and item and item == menu.pressedItem
+                and slot == menu.pressedSlot and EquippedID(slot) == item.id
+            if ready then
+                self:SetAttribute("*macrotext1",
+                    ("/use [nocombat] item:%d\n/use [nocombat] %d"):format(entry.id, slot))
+            end
             self:SetAttribute("*type1", ready and "macro" or nil)
+            menu.pressedRow = nil
         end)
         row:SetScript("OnEnter", function(self)
             CancelClose()
@@ -550,15 +636,19 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText, 
             if entry.bonus then GameTooltip:AddLine("+" .. entry.bonus .. " Fishing", 0.3, 1, 0.3) end
             GameTooltip:Show()
         end)
-        row:SetScript("OnLeave", function()
+        row:SetScript("OnLeave", function(self)
+            if menu.pressedRow == self then menu.pressedRow = nil end
             GameTooltip:Hide()
             menu:ScheduleClose()
         end)
         row:HookScript("PostClick", function(self, button, down)
-            if button == "LeftButton" and not down and not InCombatLockdown()
-                and self:GetAttribute("*type1") == "macro" then
+            if button ~= "LeftButton" or down or InCombatLockdown() then return end
+            if self:GetAttribute("*type1") == "macro" then
+                self:SetAttribute("*type1", nil)
                 menu:Hide()
                 GameTooltip:Hide()
+            elseif menu:IsShown() then
+                RefreshDrawer(menu)
             end
         end)
         menu.rows[#menu.rows + 1] = row
@@ -639,7 +729,7 @@ local function CreateFishing()
     pole:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
     local menu = CreateItemDrawer(fishing, addon.Lures, FishingTarget, nil,
-        "No lures in bags", "Equip pole first", 104)
+        "No lures in bags", 112)
     fishing.menu = menu
     menu:SetPoint("TOP", fishing, "BOTTOM", 0, -3)
     local function OpenDrawer()
@@ -827,62 +917,11 @@ local function CreateUI()
         end)
     end
     weaponDrawer = CreateItemDrawer(bar, addon.WeaponEnhancements, WeaponTarget, AcceptsEnhancement,
-        "No compatible items in bags", "Equip weapon first", 174)
+        "No compatible items in bags", 174)
     bar.weaponDrawer = weaponDrawer
     CreateFishing()
     ConfigureActions()
     UpdateVisuals()
-end
-
--- Custom slash handlers cannot supply secure combat actions. Native macro text
--- is provided separately for a user-triggered WoW macro.
-local function FinishOffhandSwap()
-    local swap = pendingOffhand
-    if not swap then return end
-    if InCombatLockdown() or db.weapons[swap.index] ~= swap.set or swap.set.offhand ~= swap.offhand then
-        pendingOffhand = nil
-        return
-    end
-    local mainID = EquippedID()
-    if mainID ~= swap.set.id then
-        -- An unrelated main-hand change supersedes this request.
-        if mainID and (swap.sawMain or mainID ~= swap.previousMain) then pendingOffhand = nil end
-        return
-    end
-    swap.sawMain = true
-    if IsInventoryItemLocked(MAIN_HAND) or IsInventoryItemLocked(OFF_HAND) then return end
-    pendingOffhand = nil
-    if EquippedID(OFF_HAND) ~= swap.offhand.id then
-        C_Item.EquipItemByName("item:" .. swap.offhand.id, OFF_HAND)
-    end
-end
-
-local function EquipSet(index)
-    if InCombatLockdown() then Message("Slash equipping is out of combat only. Use the keybind/UI in combat, or /fws macro " .. index .. " to copy a native macro after combat."); return end
-    pendingOffhand = nil
-    local set = db.weapons[index]
-    if not set then Message("Set " .. index .. " is empty."); return end
-    for _, item in ipairs({ set, set.offhand }) do
-        if not Carried(item.id) then
-            Message("Set " .. index .. " is missing " .. (item.link or ("item " .. item.id)) .. ".")
-            return
-        end
-    end
-    local previousMain = EquippedID()
-    if set.offhand and EquippedID(OFF_HAND) ~= set.offhand.id then
-        local swap = { index = index, set = set, offhand = set.offhand, previousMain = previousMain }
-        pendingOffhand = swap
-        C_Timer.After(2, function()
-            if pendingOffhand == swap then
-                pendingOffhand = nil
-                Message("Off-hand swap timed out. Try equipping the set again.")
-            end
-        end)
-    end
-    if previousMain ~= set.id then C_Item.EquipItemByName("item:" .. set.id, MAIN_HAND) end
-    FinishOffhandSwap()
-    UpdateVisuals()
-    SyncToggle()
 end
 
 local function ShowMacro(index)
