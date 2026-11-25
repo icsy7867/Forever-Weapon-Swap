@@ -303,7 +303,12 @@ local function ReceiveWeapon(button)
     end
 end
 
+local function HideTooltip(owner)
+    if GameTooltip:IsOwned(owner) then GameTooltip:Hide() end
+end
+
 local function Tooltip(button, drawerOpened)
+    if not db.showEquipmentTooltips then return end
     local anchor = drawerOpened and not button.isOffhand and "ANCHOR_BOTTOM" or "ANCHOR_TOP"
     GameTooltip:SetOwner(button, anchor)
     local weapon = Weapon(button.choice, button.isOffhand)
@@ -468,14 +473,24 @@ local function NeedsMainForOffhand(item, slot)
     return location == "INVTYPE_2HWEAPON"
 end
 
+local drawerHints = {
+    missing = "Item missing",
+    cursor = "Clear your cursor",
+    waiting = "Wait for the swap",
+    missingMain = "Main hand missing",
+    release = "Release to apply",
+    apply = "Click to apply",
+    equip = "Hold to equip",
+}
+
 local function DrawerBlockReason(menu, item, slot)
-    if not item or not Carried(item.id) then return "Item missing" end
-    if CursorBusy() then return "Clear your cursor" end
-    if IsInventoryItemLocked(slot) then return "Wait for the swap" end
+    if not item or not Carried(item.id) then return drawerHints.missing end
+    if CursorBusy() then return drawerHints.cursor end
+    if IsInventoryItemLocked(slot) then return drawerHints.waiting end
     if EquippedID(slot) ~= item.id then
-        if IsInventoryItemLocked(slot == MAIN_HAND and OFF_HAND or MAIN_HAND) then return "Wait for the swap" end
+        if IsInventoryItemLocked(slot == MAIN_HAND and OFF_HAND or MAIN_HAND) then return drawerHints.waiting end
         if NeedsMainForOffhand(item, slot) and not Carried(Weapon(menu.owner.choice).id) then
-            return "Main hand missing"
+            return drawerHints.missingMain
         end
     end
 end
@@ -515,11 +530,12 @@ local function RefreshDrawer(menu)
     local hint
     if count == 0 then hint = menu.emptyText
     elseif blocked then hint = blocked
-    elseif menu.pressedRow then hint = equipped and "Release to apply" or "Wait for the swap"
-    else hint = equipped and "Click to apply" or "Hold to equip" end
+    elseif menu.pressedRow then hint = equipped and drawerHints.release or drawerHints.waiting
+    else hint = equipped and drawerHints.apply or drawerHints.equip end
     menu.status:SetText(hint)
     -- Keep the row under the pointer when an equipment event changes the hint.
-    local width = math.max(8 + columns * 30, menu.hintWidth)
+    local textWidth = count == 0 and menu.status:GetStringWidth() or menu.hintWidth
+    local width = math.max(8 + columns * 30, math.ceil(textWidth) + 16)
     menu:SetSize(width, 24 + height)
     for index, row in ipairs(visible) do
         local column = (index - 1) % columns
@@ -537,11 +553,10 @@ local function RefreshOpenDrawers()
     if weaponDrawer:IsShown() then RefreshDrawer(weaponDrawer) end
 end
 
-local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText, hintWidth)
+local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText)
     local menu = CreateFrame("Frame", nil, parent, "BackdropTemplate,SecureHandlerStateTemplate")
     menu.getTarget, menu.accepts = getTarget, accepts
-    menu.emptyText, menu.hintWidth = emptyText, hintWidth
-    menu:SetSize(hintWidth, 24)
+    menu.emptyText = emptyText
     menu:EnableMouse(true)
     menu:SetFrameStrata("DIALOG")
     menu:SetClampedToScreen(true)
@@ -551,6 +566,12 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText, 
     RegisterStateDriver(menu, "combat", "[combat] active; idle")
     menu.status = menu:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     menu.status:SetPoint("BOTTOM", 0, 5)
+    menu.hintWidth = 0
+    for _, hint in pairs(drawerHints) do
+        menu.status:SetText(hint)
+        menu.hintWidth = math.max(menu.hintWidth, menu.status:GetStringWidth())
+    end
+    menu.status:SetText("")
     menu.rows = {}
 
     local closeTimer
@@ -631,6 +652,7 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText, 
         end)
         row:SetScript("OnEnter", function(self)
             CancelClose()
+            if not db.showConsumableTooltips then return end
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
             GameTooltip:SetItemByID(entry.id)
             if entry.bonus then GameTooltip:AddLine("+" .. entry.bonus .. " Fishing", 0.3, 1, 0.3) end
@@ -638,7 +660,7 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText, 
         end)
         row:SetScript("OnLeave", function(self)
             if menu.pressedRow == self then menu.pressedRow = nil end
-            GameTooltip:Hide()
+            HideTooltip(self)
             menu:ScheduleClose()
         end)
         row:HookScript("PostClick", function(self, button, down)
@@ -646,7 +668,7 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText, 
             if self:GetAttribute("*type1") == "macro" then
                 self:SetAttribute("*type1", nil)
                 menu:Hide()
-                GameTooltip:Hide()
+                HideTooltip(self)
             elseif menu:IsShown() then
                 RefreshDrawer(menu)
             end
@@ -715,6 +737,7 @@ local function CreateFishing()
         end
     end)
     pole:SetScript("OnEnter", function(self)
+        if not db.showEquipmentTooltips then return end
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         if db.fishingPole then
             GameTooltip:SetItemByID(db.fishingPole.id)
@@ -726,10 +749,10 @@ local function CreateFishing()
         GameTooltip:AddLine("Drop a pole here or right-click to save your equipped pole", 0.8, 0.8, 0.8)
         GameTooltip:Show()
     end)
-    pole:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    pole:SetScript("OnLeave", HideTooltip)
 
     local menu = CreateItemDrawer(fishing, addon.Lures, FishingTarget, nil,
-        "No lures in bags", 112)
+        "No lures in bags")
     fishing.menu = menu
     menu:SetPoint("TOP", fishing, "BOTTOM", 0, -3)
     local function OpenDrawer()
@@ -754,28 +777,38 @@ end
 
 local function RegisterSettings()
     settingsCategory = Settings.RegisterVerticalLayoutCategory("Forever Weapon Swap")
-    local function Register(key, label, kind, default)
+    local function Register(key, label, kind, default, onChanged)
         return Settings.RegisterProxySetting(settingsCategory, "FWS_" .. key, kind, label, default,
             function() return db[key] end,
             function(value)
                 db[key] = value
-                ApplyAppearance()
-                if key == "includeFishingInCycle" then SyncToggle() end
+                if onChanged then onChanged() end
             end)
     end
-    local size = Register("scale", "Size", Settings.VarType.Number, 1)
+    local size = Register("scale", "Size", Settings.VarType.Number, 1, ApplyAppearance)
     local sizeOptions = Settings.CreateSliderOptions(0.6, 2, 0.05)
-    local opacity = Register("opacity", "Opacity", Settings.VarType.Number, 100)
+    local opacity = Register("opacity", "Opacity", Settings.VarType.Number, 100, ApplyAppearance)
     local opacityOptions = Settings.CreateSliderOptions(20, 100, 5)
     local label = MinimalSliderWithSteppersMixin.Label.Right
     sizeOptions:SetLabelFormatter(label, function(value) return ("%d%%"):format(math.floor(value * 100 + 0.5)) end)
     opacityOptions:SetLabelFormatter(label, function(value) return ("%d%%"):format(value) end)
     Settings.CreateSlider(settingsCategory, size, sizeOptions, "Change the size of the weapon swap bar.")
     Settings.CreateSlider(settingsCategory, opacity, opacityOptions, "Change how transparent the bar is.")
-    local hide = Register("hideFishingInCombat", "Hide fishing controls in combat", Settings.VarType.Boolean, true)
+    local hide = Register("hideFishingInCombat", "Hide fishing controls in combat", Settings.VarType.Boolean, true, ApplyAppearance)
     Settings.CreateCheckbox(settingsCategory, hide, "Hide the fishing pole and lure arrow while in combat.")
-    local cycle = Register("includeFishingInCycle", "Include fishing pole in weapon cycle", Settings.VarType.Boolean, true)
-    Settings.CreateCheckbox(settingsCategory, cycle, "Cycle through your fishing pole and weapon sets outside combat.")
+    local equipmentTooltips = Register("showEquipmentTooltips", "Show equipment tooltips", Settings.VarType.Boolean, false)
+    Settings.CreateCheckbox(settingsCategory, equipmentTooltips, "Show item tooltips for weapons, off-hands, and the fishing pole.")
+    local consumableTooltips = Register("showConsumableTooltips", "Show consumable tooltips", Settings.VarType.Boolean, true)
+    Settings.CreateCheckbox(settingsCategory, consumableTooltips, "Show item tooltips for weapon enhancements and fishing lures.")
+    -- Keep the saved preference in the original form so it also works in older versions.
+    local excludePole = Settings.RegisterProxySetting(settingsCategory, "FWS_excludeFishingFromCycle",
+        Settings.VarType.Boolean, "Exclude fishing pole from weapon cycle", false,
+        function() return not db.includeFishingInCycle end,
+        function(exclude)
+            db.includeFishingInCycle = not exclude
+            SyncToggle()
+        end)
+    Settings.CreateCheckbox(settingsCategory, excludePole, "Skip the fishing pole when cycling weapon sets. Click the pole to equip it directly.")
     Settings.RegisterAddOnCategory(settingsCategory)
 end
 
@@ -912,12 +945,12 @@ local function CreateUI()
             Tooltip(self, drawerOpened)
         end)
         button:SetScript("OnLeave", function(self)
-            GameTooltip:Hide()
+            HideTooltip(self)
             if weaponDrawer.owner == self and weaponDrawer:IsShown() then weaponDrawer:ScheduleClose() end
         end)
     end
     weaponDrawer = CreateItemDrawer(bar, addon.WeaponEnhancements, WeaponTarget, AcceptsEnhancement,
-        "No compatible items in bags", 174)
+        "No compatible items in bags")
     bar.weaponDrawer = weaponDrawer
     CreateFishing()
     ConfigureActions()
@@ -1034,6 +1067,8 @@ events:SetScript("OnEvent", function(_, event, arg1)
         db.opacity = math.max(20, math.min(100, tonumber(db.opacity) or 100))
         if db.hideFishingInCombat == nil then db.hideFishingInCombat = true end
         if db.includeFishingInCycle == nil then db.includeFishingInCycle = true end
+        if db.showEquipmentTooltips == nil then db.showEquipmentTooltips = false end
+        if db.showConsumableTooltips == nil then db.showConsumableTooltips = true end
         events:UnregisterEvent("ADDON_LOADED")
         events:RegisterEvent("PLAYER_REGEN_ENABLED")
         if not InCombatLockdown() then InitializeUI() end

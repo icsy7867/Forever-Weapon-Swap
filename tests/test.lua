@@ -53,6 +53,7 @@ function methods:SetAlpha(v) self.alpha = v end
 function methods:CreateTexture() return setmetatable({attrs={},scripts={}}, {__index=methods}) end
 methods.CreateFontString = methods.CreateTexture
 function methods:SetText(s) self.text=s end
+function methods:GetStringWidth() return #self.text * 6 end
 function methods:GetFrameLevel() return 1 end
 function methods:SetCooldownFromDurationObject(duration, clearIfZero)
     assert(self.frameType == 'Cooldown' and clearIfZero == true)
@@ -158,7 +159,14 @@ Settings = {
  RegisterAddOnCategory = noop,
  OpenToCategory = function(id) openedCategory = id end,
 }
-GameTooltip=setmetatable({}, {__index=function() return noop end})
+GameTooltip = {
+    SetOwner = function(self, owner) self.owner = owner end,
+    IsOwned = function(self, owner) return self.owner == owner end,
+    SetItemByID = function(self, id) self.item = id end,
+    AddLine = noop,
+    Show = function(self) self.shown = true end,
+    Hide = function(self) self.owner, self.item, self.shown = nil, nil, false end,
+}
 local function LoadAddon()
     local namespace = {}
     local dataSource = addonSource:gsub("ForeverWeaponSwap%.lua$", "Consumables.lua")
@@ -363,6 +371,25 @@ lureCounts[6529], lureCounts[6533] = 3, 2
 hovered[fishingPanel]=true
 pole.scripts.OnEnter(pole)
 assert(menu.shown and menu.status.text=='Hold to equip')
+local showGear = settings.FWS_showEquipmentTooltips
+local showConsumables = settings.FWS_showConsumableTooltips
+assert(showGear.checkbox and showGear.default == false and showGear.get() == false)
+assert(showConsumables.checkbox and showConsumables.default == true and showConsumables.get() == true)
+assert(not GameTooltip.shown, 'pole tooltip defaults off while its drawer opens')
+showGear.set(true)
+pole.scripts.OnEnter(pole)
+assert(GameTooltip.shown and GameTooltip.item == 700)
+showGear.set(false)
+pole.scripts.OnLeave(pole)
+assert(not GameTooltip.shown)
+local lureRow = menu.rows[1]
+lureRow.scripts.OnEnter(lureRow)
+assert(GameTooltip.shown and GameTooltip.item == 6533, 'lure tooltip defaults on')
+lureRow.scripts.OnLeave(lureRow)
+showConsumables.set(false)
+lureRow.scripts.OnEnter(lureRow)
+assert(not GameTooltip.shown and menu.shown, 'lure tooltip can be disabled independently')
+showConsumables.set(true)
 assert(menu.rows[1].shown and not menu.rows[1].icon.desaturated and not menu.rows[1].attrs['*type1'])
 hovered[fishingPanel]=nil
 pole.scripts.OnLeave(pole)
@@ -391,6 +418,8 @@ arrow.scripts.OnClick(arrow)
 lureCounts[6533]=0
 event('BAG_UPDATE_DELAYED')
 assert(not menu.rows[1].shown and menu.rows[#menu.rows].shown)
+assert(menu.width < 140 and menu.width >= menu.status:GetStringWidth() + 16,
+    'a single lure uses a compact drawer with room for its status')
 shift=true; click(two,'RightButton'); shift=false
 assert(not ForeverWeaponSwapDB.weapons[2])
 ChangeCombat(true)
@@ -409,7 +438,8 @@ pole.scripts.OnClick(pole,'LeftButton')
 event('PLAYER_EQUIPMENT_CHANGED',16)
 slash('toggle')
 assert(equipped==100, 'slash toggle returns to set 1 from fishing')
-assert(settings.FWS_includeFishingInCycle.get() == true, 'fishing in cycle defaults on')
+local excludePole = settings.FWS_excludeFishingFromCycle
+assert(excludePole.checkbox and excludePole.default == false and excludePole.get() == false)
 click(toggle)
 assert(equipped==700, 'one set cycles to the saved pole outside combat')
 click(toggle)
@@ -422,12 +452,19 @@ click(toggle)
 assert(equipped==700, 'set 2 cycles to fishing')
 click(toggle)
 assert(equipped==100, 'pole cycles to set 1')
-settings.FWS_includeFishingInCycle.set(false)
+excludePole.set(true)
+assert(excludePole.get() and not ForeverWeaponSwapDB.includeFishingInCycle)
 click(toggle); click(toggle)
 assert(equipped==100, 'disabled option cycles only through weapon sets')
 click(toggle)
 assert(equipped==200)
-settings.FWS_includeFishingInCycle.set(true)
+assert(fishingPanel.shown, 'exclusion leaves the pole visible')
+pole.scripts.OnClick(pole,'LeftButton')
+event('PLAYER_EQUIPMENT_CHANGED',16)
+assert(equipped==700, 'excluded pole can still be equipped directly')
+click(toggle); click(toggle)
+assert(equipped==200, 'cycle leaves an excluded pole for the weapon sets')
+excludePole.set(false)
 carried={100,200,300,400}
 event('BAG_UPDATE_DELAYED')
 click(toggle)
@@ -499,6 +536,9 @@ event('PLAYER_REGEN_ENABLED')
 assert(not bar.moving and ForeverWeaponSwapDB.position, 'stop deferred drag after combat')
 
 local priorBar=ForeverWeaponSwapBar
+excludePole.set(true)
+showGear.set(true)
+showConsumables.set(false)
 ChangeCombat(true)
 LoadAddon()
 local loginFrame=frames[#frames]
@@ -509,6 +549,9 @@ loginFrame.scripts.OnEvent(loginFrame,'PLAYER_REGEN_ENABLED')
 assert(ForeverWeaponSwapBar~=priorBar)
 assert(ForeverWeaponSwapChoice1.attrs['*macrotext1']:find('/equipslot 17 item:400',1,true))
 assert(ForeverWeaponSwapController.attrs.weapon1, 'combat toggle configured after deferral')
+assert(settings.FWS_excludeFishingFromCycle.get(), 'saved false inclusion survives reload')
+assert(settings.FWS_showEquipmentTooltips.get() and not settings.FWS_showConsumableTooltips.get(),
+    'both tooltip preferences survive reload')
 io.write('PASS: drawer hover and lure actions, occupied-slot assignment, item cache, async off-hand equip, combat login/drag recovery\n')
 
 -- Each enhancement drawer resolves a hand, filters by weapon class, and rechecks on click.
@@ -536,10 +579,20 @@ equipped, equippedOff = 300, 400
 mainButton.scripts.OnEnter(mainButton)
 assert(drawer.shown and blunt.shown and oil.shown and elemental.shown)
 assert(not sharp.shown and not poison.shown and blunt.count.text == 3)
+assert(GameTooltip.shown and GameTooltip.item == 300)
+mainButton.scripts.OnLeave(mainButton)
+blunt.scripts.OnEnter(blunt)
+assert(not GameTooltip.shown, 'consumable setting also controls weapon enhancement tooltips')
+settings.FWS_showConsumableTooltips.set(true)
+blunt.scripts.OnEnter(blunt)
+assert(GameTooltip.shown and GameTooltip.item == 12643)
 click(blunt)
 assert(appliedItem == 12643 and appliedSlot == 16 and not drawer.shown)
 offButton.scripts.OnEnter(offButton)
 assert(not drawer.shown, "shield has no drawer")
+assert(GameTooltip.shown and GameTooltip.item == 400, 'equipment setting includes off-hands')
+offButton.scripts.OnLeave(offButton)
+settings.FWS_showEquipmentTooltips.set(false)
 
 -- A dagger is saved and equipped in the off-hand. A rogue can use poison.
 cursor=600
@@ -548,6 +601,7 @@ equippedOff=600
 playerClass="ROGUE"
 offButton.scripts.OnEnter(offButton)
 assert(drawer.shown and sharp.shown and poison.shown and oil.shown and not blunt.shown)
+assert(not GameTooltip.shown, 'disabling off-hand tooltips leaves the drawer available')
 click(poison)
 assert(appliedItem == 8928 and appliedSlot == 17)
 
@@ -625,12 +679,14 @@ openPole()
 appliedItem = nil
 press(bait)
 assert(equipped == 300 and queuedMain == 700 and fishDrawer.status.text == "Wait for the swap")
+local waitingWidth = fishDrawer.width
 release(bait)
 assert(not appliedItem and fishDrawer.shown)
 equipped, equippedOff = queuedMain, nil
 update("PLAYER_EQUIPMENT_CHANGED", 16)
 RunTimers(2)
 assert(not appliedItem and fishDrawer.status.text == "Click to apply", "events and timers never consume")
+assert(fishDrawer.width == waitingWidth, 'status changes keep the lure icon in place')
 click(bait)
 assert(appliedItem == 268880 and appliedSlot == 16)
 

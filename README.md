@@ -1,4 +1,4 @@
-# Forever Weapon Swap 1.8.1
+# Forever Weapon Swap 1.8.2
 
 Two compact main-hand/off-hand sets for World of Warcraft: Forever (Interface 16001). No dependencies. Existing 1.0 main-hand choices and position settings are retained.
 
@@ -39,7 +39,12 @@ Weapon sets, the saved pole, position, visibility, size, opacity, and lock state
 
 ## Settings
 
-Open **Options → AddOns → Forever Weapon Swap**, or type `/fws settings`. **Size** ranges from 60% to 200%, **Opacity** ranges from 20% to 100%, and **Hide fishing controls in combat** defaults to on. You can leave the fishing controls visible in combat by unchecking the box. **Include fishing pole in weapon cycle** also defaults to on. Uncheck it to keep the pole out of the cycle. Pole setup and lure application are available outside combat.
+Open **Options → AddOns → Forever Weapon Swap**, or type `/fws settings`. **Size** ranges from 60% to 200%, and **Opacity** ranges from 20% to 100%.
+
+- **Show equipment tooltips** defaults to off and covers main-hand weapons, off-hands, and the fishing pole.
+- **Show consumable tooltips** defaults to on and covers both weapon enhancements and fishing lures. Both drawers open on hover with either tooltip setting.
+- **Exclude fishing pole from weapon cycle** defaults to off. Check it to skip the pole in the cycle and equip the pole by clicking it directly. The checkbox reflects each character's saved cycle preference from earlier versions.
+- **Hide fishing controls in combat** defaults to on. Uncheck it to keep the controls visible during combat. Pole setup and lure application are available outside combat.
 
 ## Keybind and slash commands
 
@@ -101,7 +106,7 @@ Items are stored by item ID. Differently enchanted copies of the same ID cannot 
 
 Automated checks passed in a mock WoW API/frame environment using Lua 5.4. Checks cover the original behavior plus paired sets, shields, held off-hands, dual-wield configurations, partial-set highlighting, optional off-hand behavior, two-handed transitions, command parsing, slash combat guards, native macro export, missing items, and secure toggle target selection.
 
-Run `python3 tests/run.py` from the extracted addon on Linux with `liblua5.4.so.0` installed. The mock suite covers the lure drawer, item placement, delayed off-hand swaps, and recovery when a load or drag overlaps combat. The mock suite also exercises consumable presses and releases with immediate, delayed, and interrupted swaps. Version 1.8.1 still needs a live WoW Forever check for input timing, protected actions, and enchant replacement prompts. `/console scriptErrors 1` enables Lua error popups.
+Run `python3 tests/run.py` from the extracted addon on Linux with `liblua5.4.so.0` installed. The mock suite covers the lure drawer, item placement, delayed off-hand swaps, and recovery when a load or drag overlaps combat. The mock suite also exercises consumable presses and releases with immediate, delayed, and interrupted swaps. Version 1.8.2 still needs a live WoW Forever check for input timing, protected actions, and enchant replacement prompts. `/console scriptErrors 1` enables Lua error popups.
 
 ## Consumable data
 
@@ -123,3 +128,17 @@ The item list is in `Consumables.lua`. Each entry uses the bag item ID. Ordinary
 - [WeaponSetsForever: existing Forever equipment addon example](https://github.com/jbedworth/WeaponSetsForever)
 
 Implementation is original; references were used to verify API patterns and restrictions.
+
+## Changelog
+
+- **1.8.2** — Added separate tooltip settings for equipment and consumables. Equipment tooltips default to off, and consumable tooltips default to on. Added an **Exclude fishing pole from weapon cycle** checkbox that preserves the previous preference. Made both consumable drawers fit their icons and status messages.
+- **1.8.1** — Added click-to-equip and apply for fishing lures and weapon enhancements. Press to equip the saved item and release on the same icon once it is ready to apply.
+- **1.8.0** — Added per-hand drawers for 42 temporary weapon enhancements, including sharpening stones, weightstones, oils, and rogue poisons. Filtered consumables by weapon type and class, and added support for “Secret” Bait to the fishing drawer.
+- **1.7.0** — Centered the hoverable lure drawer and added compact item icons with stack counts. Fixed action setup after combat login, interrupted drags, and drops onto occupied slots. Improved delayed off-hand swaps, cooldown updates, and item-link loading. Packaged the mock tests.
+- **1.6.0** — Included the fishing pole in the default cycle outside combat, with an option to exclude it. Skipped empty or unavailable choices and kept combat cycling limited to weapon sets.
+- **1.5.0** — Added a dedicated fishing pole slot and a drawer with six supported lures. Added settings for scale, opacity, and fishing visibility during combat. Updated cycling to skip empty sets.
+- **1.4.0** — Hid empty off-hand slots until a compatible item is dragged. Fixed the keybinding labels and category.
+- **1.3.0** — Added a global cooldown sweep on weapon icons and expanded the README and contributor guidance.
+- **1.2.0** — Added direct keybinds for each set, safer equipment saves, clearer missing-item messages, and fewer bag scans.
+- **1.1.0** — Added an optional off-hand for each set, including shields and held items. Added slash commands to equip, cycle, save, and export set macros.
+- **1.0** — Introduced two saved main-hand choices on a movable bar, with click-to-equip, a toggle keybind, a yellow equipped-item highlight, and per-character settings.
