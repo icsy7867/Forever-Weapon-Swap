@@ -6,6 +6,15 @@ Two compact main-hand/off-hand sets for World of Warcraft: Forever (Interface 16
 
 Exit the game, replace the `ForeverWeaponSwap` folder in `World of Warcraft/_forever_/Interface/AddOns/`, and start the game. The final TOC path must be `AddOns/ForeverWeaponSwap/ForeverWeaponSwap.toc`.
 
+## Bind the weapon swap key
+
+1. In WoW, open **Options → Keybindings → Forever Weapon Swap**.
+2. Assign a key to **Cycle Weapon Sets**. Press it to swap between your saved sets.
+
+Outside combat, the default order is **Set 1 → Set 2 → Fishing Pole**. The key skips empty sets and any pole that's unavailable or excluded in Settings. In combat, it cycles only through weapon sets.
+
+You can also bind **Equip Weapon Set 1** and **Equip Weapon Set 2** to select a set directly. All three bindings start unassigned on a fresh install. Existing bindings carry over when you update. Fully restart WoW after updating so it reloads the bindings.
+
 ## Setup and UI
 
 The bar has two columns for **set 1** and **set 2**. Each column has a main-hand icon. A smaller **OH** icon appears below it when the set has an off-hand or when you're holding a compatible item to drop there outside combat.
@@ -46,9 +55,7 @@ Open **Options → AddOns → Forever Weapon Swap**, or type `/fws settings`. **
 - **Exclude fishing pole from weapon cycle** defaults to off. Check it to skip the pole in the cycle and equip the pole by clicking it directly. The checkbox reflects each character's saved cycle preference from earlier versions.
 - **Hide fishing controls in combat** defaults to on. Uncheck it to keep the controls visible during combat. Pole setup and lure application are available outside combat.
 
-## Keybind and slash commands
-
-Bind **Cycle Weapon Sets** under **Options → Keybindings → Forever Weapon Swap**. Outside combat the default order is Set 1 → Set 2 → Fishing Pole. The cycle skips empty sets and skips a pole that is unavailable or excluded in Settings. With one weapon set and a saved pole, it alternates between the two outside combat. Use **Equip Weapon Set 1** and **Equip Weapon Set 2** to select or retry a specific set. All three start unassigned on a fresh install. The update keeps the same binding IDs, so keys assigned to the working actions carry over. Restart WoW after updating so it reloads `Bindings.xml`.
+## Slash commands
 
 | Command | Action |
 | --- | --- |
@@ -131,7 +138,7 @@ Implementation is original; references were used to verify API patterns and rest
 
 ## Changelog
 
-- **1.8.2** — Added separate tooltip settings for equipment and consumables. Equipment tooltips default to off, and consumable tooltips default to on. Added an **Exclude fishing pole from weapon cycle** checkbox that preserves the previous preference. Made both consumable drawers fit their icons and status messages.
+- **1.8.2** — Added separate tooltip settings for equipment and consumables. Equipment tooltips default to off, and consumable tooltips default to on. Added an **Exclude fishing pole from weapon cycle** checkbox that preserves the previous preference. Made both consumable drawers fit their icons and status messages. Moved the swap keybinding instructions to the top of the README.
 - **1.8.1** — Added click-to-equip and apply for fishing lures and weapon enhancements. Press to equip the saved item and release on the same icon once it is ready to apply.
 - **1.8.0** — Added per-hand drawers for 42 temporary weapon enhancements, including sharpening stones, weightstones, oils, and rogue poisons. Filtered consumables by weapon type and class, and added support for “Secret” Bait to the fishing drawer.
 - **1.7.0** — Centered the hoverable lure drawer and added compact item icons with stack counts. Fixed action setup after combat login, interrupted drags, and drops onto occupied slots. Improved delayed off-hand swaps, cooldown updates, and item-link loading. Packaged the mock tests.
