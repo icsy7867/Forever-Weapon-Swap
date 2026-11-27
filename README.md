@@ -143,6 +143,8 @@ Implementation is original; references were used to verify API patterns and rest
 
 ## Changelog
 
+- **1.9.0** — Documented the contributor update workflow and CurseForge changelog format.
+
 - **1.9.0** — Edit the cycle binding directly in addon settings. Visual Settings and Fishing now group related options, with consistent fishing label sizes.
 
 - **1.9.0** — Added a [developer glossary](GLOSSARY.md) covering addon terminology, Forever APIs, and the repository map.

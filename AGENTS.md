@@ -1,5 +1,9 @@
 # Forever Weapon Swap
 
+## Committing updates
+
+Commit and push all agent changes to `beta`. Check the target branch before committing or updating a remote ref. In the README changelog, use the plain numeric release version (for example, `1.9.0`) and omit branch names throughout so entries can be pasted directly into CurseForge.
+
 ## Starting a session and maintaining the glossary
 
 Read [GLOSSARY.md](GLOSSARY.md) at the start of a fresh session. It maps player language to the repo's files, identifiers, events and Forever-specific API behavior. Use it to locate the relevant implementation and tests. Consult README.md for player instructions.
