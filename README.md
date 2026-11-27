@@ -52,7 +52,7 @@ Weapon sets, the saved pole, position, visibility, size, opacity, and lock state
 
 Open **Options → AddOns → Forever Weapon Swap**, or type `/fws settings`. **Size** ranges from 60% to 200%, and **Opacity** ranges from 20% to 100%.
 
-- The settings header shows your **Cycle Weapon Sets** key or **Unbound**. **Lock bar position** locks the WEAPONS drag handle.
+- Under **Keybindings**, click a **Cycle Weapon Sets** binding slot and press the desired key. This edits the same action as the main Keybindings screen. **Lock bar position** locks the WEAPONS drag handle.
 - **Show equipment tooltips** defaults to off and covers main-hand weapons, off-hands, and the fishing pole. Empty slots still give brief setup instructions.
 - **Show consumable tooltips** defaults to on and covers both weapon enhancements and fishing lures. Both drawers open on hover with either tooltip setting.
 - **Disable fishing** defaults to off. Check it to show just the two weapon sets and disable the fishing pole slot, lure drawer, and pole selection through the keybind or `/fws toggle`. The two dependent fishing options gray out while fishing is disabled. Your saved pole and preferences return when you uncheck it. If changed during combat, the layout updates when combat ends. Use a weapon set to swap away from an already equipped pole.
@@ -142,6 +142,8 @@ The item list is in `Consumables.lua`. Each entry uses the bag item ID. Ordinary
 Implementation is original; references were used to verify API patterns and restrictions.
 
 ## Changelog
+
+- **1.9.0-dev** — Edit the cycle binding directly in addon settings. Visual Settings and Fishing now group related options, with consistent fishing label sizes.
 
 - **1.9.0-dev** — Added a [developer glossary](GLOSSARY.md) covering addon terminology, Forever APIs, and the repository map.
 

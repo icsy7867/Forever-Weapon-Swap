@@ -55,6 +55,8 @@ Forever Weapon Swap saves two weapon sets and an optional fishing pole per chara
 | Secret value / public value | Some client API results restrict Lua inspection. The addon's `Public()` helper checks `issecretvalue` before comparisons or formatting. The word “secret” here describes an API restriction. |
 | Binding category | Forever groups entries through the `category` attribute in Bindings.xml. An earlier `header` entry appeared as a dead binding under Other. Preserve the working action IDs when changing labels. |
 
+The addon Settings page uses Forever's native `CreateKeybindingEntryInitializer` with the action's index from `GetBinding`. Fishing options use `AddModifyPredicate` and `AddEvaluateStateCVar` to follow the disable setting while retaining top-level label styling. See [Forever Settings controls](https://github.com/Gethe/wow-ui-source/blob/forever/Interface/AddOns/Blizzard_Settings_Shared/Blizzard_SettingControls.lua).
+
 ## Events worth recognizing in a trace
 
 | Event | What the addon does |

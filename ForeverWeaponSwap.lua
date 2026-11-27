@@ -954,15 +954,14 @@ end
 local function RegisterSettings()
     local layout
     settingsCategory, layout = Settings.RegisterVerticalLayoutCategory("Forever Weapon Swap")
-    local binding = CreateSettingsListSectionHeaderInitializer("Cycle Weapon Sets",
-        "Assign this key in Options > Keybindings > Forever Weapon Swap.")
-    binding.customNameUpdateFunc = function()
-        local first, second = GetBindingKey("CLICK ForeverWeaponSwapToggle:LeftButton")
-        local text = first and GetBindingText(first) or "Unbound"
-        if second then text = text .. " / " .. GetBindingText(second) end
-        return "Cycle Weapon Sets — " .. text
+    layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Keybindings"))
+    for index = 1, GetNumBindings() do
+        if GetBinding(index) == "CLICK ForeverWeaponSwapToggle:LeftButton" then
+            layout:AddInitializer(CreateKeybindingEntryInitializer(index))
+            break
+        end
     end
-    layout:AddInitializer(binding)
+    layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Visual Settings"))
     local function Register(key, label, kind, default, onChanged)
         return Settings.RegisterProxySetting(settingsCategory, "FWS_" .. key, kind, label, default,
             function() return db[key] end,
@@ -982,17 +981,18 @@ local function RegisterSettings()
     opacityOptions:SetLabelFormatter(label, function(value) return ("%d%%"):format(value) end)
     Settings.CreateSlider(settingsCategory, size, sizeOptions, "Change the size of the weapon swap bar.")
     Settings.CreateSlider(settingsCategory, opacity, opacityOptions, "Change how transparent the bar is.")
-    local disable = Register("disableFishing", "Disable fishing", Settings.VarType.Boolean, false, function()
-        ApplyAppearance()
-        SyncToggle()
-    end)
-    local disableRow = Settings.CreateCheckbox(settingsCategory, disable, "Remove the fishing panel and skip the pole when cycling. The saved pole is kept.")
-    local hide = Register("hideFishingInCombat", "Hide fishing in combat", Settings.VarType.Boolean, true, ApplyAppearance)
-    local hideRow = Settings.CreateCheckbox(settingsCategory, hide, "Hide the fishing pole and lure arrow while in combat.")
     local equipmentTooltips = Register("showEquipmentTooltips", "Show equipment tooltips", Settings.VarType.Boolean, false)
     Settings.CreateCheckbox(settingsCategory, equipmentTooltips, "Show item tooltips for weapons, off-hands, and the fishing pole.")
     local consumableTooltips = Register("showConsumableTooltips", "Show consumable tooltips", Settings.VarType.Boolean, true)
     Settings.CreateCheckbox(settingsCategory, consumableTooltips, "Show item tooltips for weapon enhancements and fishing lures.")
+    layout:AddInitializer(CreateSettingsListSectionHeaderInitializer("Fishing"))
+    local disable = Register("disableFishing", "Disable fishing", Settings.VarType.Boolean, false, function()
+        ApplyAppearance()
+        SyncToggle()
+    end)
+    Settings.CreateCheckbox(settingsCategory, disable, "Remove the fishing panel and skip the pole when cycling. The saved pole is kept.")
+    local hide = Register("hideFishingInCombat", "Hide fishing in combat", Settings.VarType.Boolean, true, ApplyAppearance)
+    local hideRow = Settings.CreateCheckbox(settingsCategory, hide, "Hide the fishing pole and lure arrow while in combat.")
     -- Keep the saved preference in the original form so it also works in older versions.
     local excludePole = Settings.RegisterProxySetting(settingsCategory, "FWS_excludeFishingFromCycle",
         Settings.VarType.Boolean, "Skip pole when cycling", false,
@@ -1003,8 +1003,10 @@ local function RegisterSettings()
         end)
     local cycleRow = Settings.CreateCheckbox(settingsCategory, excludePole, "Skip the fishing pole when cycling weapon sets. Click the pole to equip it directly.")
     local function FishingEnabled() return not db.disableFishing end
-    hideRow:SetParentInitializer(disableRow, FishingEnabled)
-    cycleRow:SetParentInitializer(disableRow, FishingEnabled)
+    for _, row in ipairs({ hideRow, cycleRow }) do
+        row:AddModifyPredicate(FishingEnabled)
+        row:AddEvaluateStateCVar(disable:GetVariable())
+    end
     Settings.RegisterAddOnCategory(settingsCategory)
 end
 

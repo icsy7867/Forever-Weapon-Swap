@@ -148,15 +148,17 @@ local function ChangeCombat(active)
 end
 local settings, openedCategory = {}, nil
 MinimalSliderWithSteppersMixin = { Label = { Right = 1 } }
-local bindingHeader, boundKey
-function GetBindingKey() return boundKey end
-function GetBindingText(key) return key end
-function CreateSettingsListSectionHeaderInitializer() return {} end
+local layoutRows
+function GetNumBindings() return 2 end
+function GetBinding(index) return index == 2 and "CLICK ForeverWeaponSwapToggle:LeftButton" or "JUMP" end
+function CreateKeybindingEntryInitializer(index) return {bindingIndex=index} end
+function CreateSettingsListSectionHeaderInitializer(name) return {heading=name} end
 Settings = {
  VarType = { Number = 1, Boolean = 2 },
- RegisterVerticalLayoutCategory = function() return { GetID = function() return 42 end }, { AddInitializer = function(_, h) bindingHeader = h end } end,
+ RegisterVerticalLayoutCategory = function() layoutRows = {}; return { GetID = function() return 42 end }, { AddInitializer = function(_, row) table.insert(layoutRows, row) end } end,
  RegisterProxySetting = function(_,key,kind,label,default,get,set)
     local setting = {label=label, default=default, get=get, set=set}
+    function setting:GetVariable() return key end
     settings[key] = setting
     return setting
  end,
@@ -164,7 +166,8 @@ Settings = {
  CreateSlider = function(_,setting,options) setting.options = options end,
  CreateCheckbox = function(_,setting)
     setting.checkbox = true
-    function setting:SetParentInitializer(parent, predicate) self.parent, self.enabled = parent, predicate end
+    function setting:AddModifyPredicate(predicate) self.enabled = predicate end
+    function setting:AddEvaluateStateCVar(variable) self.watch = variable end
     return setting
  end,
  RegisterAddOnCategory = noop,
@@ -897,8 +900,9 @@ assert(askedSlot==0 and fishDrawer.enchant.text:find("12s",1,true))
 local ticker=fishDrawer.ticker
 fishDrawer:Hide()
 assert(ticker.cancelled)
-boundKey="SHIFT-F"
-assert(bindingHeader.customNameUpdateFunc():find("SHIFT-F",1,true))
+assert(layoutRows[1].heading=="Keybindings" and layoutRows[2].bindingIndex==2)
+assert(layoutRows[3].heading=="Visual Settings" and layoutRows[4].heading=="Fishing")
+assert(settings.FWS_hideFishingInCombat.watch=="FWS_disableFishing")
 settings.FWS_disableFishing.set(true)
 assert(not settings.FWS_excludeFishingFromCycle.enabled() and not settings.FWS_hideFishingInCombat.enabled())
 settings.FWS_disableFishing.set(false)
