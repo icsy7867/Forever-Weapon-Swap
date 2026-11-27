@@ -73,7 +73,8 @@ function SecureCmdOptionParse(options)
     assert(options == '[nocombat] yes')
     if not combat then return 'yes' end
 end
-function issecretvalue() return false end
+local restricted = {}
+function issecretvalue(value) return rawequal(value, restricted) end
 local locked, unknownOff
 local asyncEquip, queuedMain, missingLink
 local itemRequests = {}
@@ -84,7 +85,7 @@ local function Timer(seconds, fn)
     timers[#timers + 1] = timer
     return timer
 end
-C_Timer = { After = Timer, NewTimer = Timer }
+C_Timer = { After = Timer, NewTimer = Timer, NewTicker = Timer }
 function methods:IsMouseOver() return hovered[self] == true end
 local function RunTimers(maxDelay)
     for _, timer in ipairs(timers) do
@@ -147,17 +148,28 @@ local function ChangeCombat(active)
 end
 local settings, openedCategory = {}, nil
 MinimalSliderWithSteppersMixin = { Label = { Right = 1 } }
+local layoutRows
+function GetNumBindings() return 2 end
+function GetBinding(index) return index == 2 and "CLICK ForeverWeaponSwapToggle:LeftButton" or "JUMP" end
+function CreateKeybindingEntryInitializer(index) return {bindingIndex=index} end
+function CreateSettingsListSectionHeaderInitializer(name) return {heading=name} end
 Settings = {
  VarType = { Number = 1, Boolean = 2 },
- RegisterVerticalLayoutCategory = function() return { GetID = function() return 42 end } end,
+ RegisterVerticalLayoutCategory = function() layoutRows = {}; return { GetID = function() return 42 end }, { AddInitializer = function(_, row) table.insert(layoutRows, row) end } end,
  RegisterProxySetting = function(_,key,kind,label,default,get,set)
     local setting = {label=label, default=default, get=get, set=set}
+    function setting:GetVariable() return key end
     settings[key] = setting
     return setting
  end,
  CreateSliderOptions = function(min, max) return { min=min, max=max, SetLabelFormatter=noop } end,
  CreateSlider = function(_,setting,options) setting.options = options end,
- CreateCheckbox = function(_,setting) setting.checkbox = true end,
+ CreateCheckbox = function(_,setting)
+    setting.checkbox = true
+    function setting:AddModifyPredicate(predicate) self.enabled = predicate end
+    function setting:AddEvaluateStateCVar(variable) self.watch = variable end
+    return setting
+ end,
  RegisterAddOnCategory = noop,
  OpenToCategory = function(id) openedCategory = id end,
 }
@@ -181,7 +193,7 @@ local function event(e,arg) eventFrame.scripts.OnEvent(eventFrame,e,arg) end
 event('ADDON_LOADED','ForeverWeaponSwap')
 local one,two,toggle=ForeverWeaponSwapChoice1,ForeverWeaponSwapChoice2,ForeverWeaponSwapToggle
 local control=ForeverWeaponSwapController
-local appliedItem, appliedSlot
+local appliedItem, appliedSlot, rejectConsumable
 local function release(button, mouse, down, fail)
  mouse = mouse or 'LeftButton'
  if button.scripts.PreClick then button.scripts.PreClick(button,mouse,down) end
@@ -195,8 +207,10 @@ local function release(button, mouse, down, fail)
  if not cancelled and not down and mouse=='LeftButton' and button.attrs['*type1']=='macro' then
    local macro=button.attrs['*macrotext1']
    if macro and not fail then
-     local item, useSlot = macro:match('/use %[%s*nocombat%] item:(%d+)\n/use %[%s*nocombat%] (%d+)')
-     if item and not combat then appliedItem, appliedSlot = tonumber(item), tonumber(useSlot) end
+     local item = macro:match('^/use %[nocombat%] item:(%d+)$')
+     if item and not combat and not rejectConsumable and button.attrs['*target-slot1'] then
+       appliedItem, appliedSlot = tonumber(item), button.attrs['*target-slot1']
+     end
      for slot,id in macro:gsub('%[nocombat%] ', ''):gmatch('/equipslot (%d+) item:(%d+)') do
        slot,id=tonumber(slot),tonumber(id)
        if slot==16 then equipped=id; if metadata[id]=='INVTYPE_2HWEAPON' then equippedOff=nil end else equippedOff=id end
@@ -305,6 +319,7 @@ assert(gcdRequested==61304 and one.cooldown.duration==opaqueDuration and two.coo
 assert(oh1.cooldown.duration==nil and oh2.cooldown.duration==nil, 'empty off-hands must stay clear')
 assert(one.cooldown.parent==ForeverWeaponSwapBar, 'cooldown must stay separate from its secure button')
 gcdSpellExists=false
+event('PLAYER_ENTERING_WORLD')
 event('ACTIONBAR_UPDATE_COOLDOWN')
 assert(gcdRequested==29515 and one.cooldown.duration==opaqueDuration)
 gcdDuration=nil
@@ -413,7 +428,7 @@ arrow.scripts.OnClick(arrow)
 assert(menu.shown and menu.rows[1].shown and not menu.rows[2].shown)
 assert(menu.rows[#menu.rows].shown and menu.rows[1].count.text==2)
 click(menu.rows[1])
-assert(menu.rows[1].attrs['*macrotext1']=='/use [nocombat] item:6533\n/use [nocombat] 16')
+assert(menu.rows[1].attrs['*macrotext1']=='/use [nocombat] item:6533')
 assert(appliedItem == 6533 and appliedSlot == 16)
 assert(not menu.shown, 'close menu after selecting lure')
 arrow.scripts.OnClick(arrow)
@@ -778,3 +793,186 @@ offButton.scripts.OnEnter(offButton)
 release(poison)
 assert(not appliedItem)
 io.write("PASS: same-click pole, main-hand and off-hand equip/application, delayed release, retry and cancellation\n")
+
+-- Exercise the current addon instance and use both public cycling entry points.
+local devDB = ForeverWeaponSwapDB
+local devSlash = SlashCmdList.FOREVERWEAPONSWAP
+local devToggle = ForeverWeaponSwapToggle
+local function refreshBags() update("BAG_UPDATE_DELAYED") end
+devDB.disableFishing, devDB.includeFishingInCycle = false, true
+devDB.fishingPole = { id = 700 }
+devDB.weapons = { {id=200}, {id=300, offhand={id=400}} }
+equipped, equippedOff, carried = 200, nil, {200,300,700}
+refreshBags()
+assert(ForeverWeaponSwapController.attrs.peacefulMacro:find("item:700", 1, true))
+click(devToggle)
+assert(equipped == 700)
+equipped=200
+devSlash("toggle")
+assert(equipped == 700)
+devSlash("2")
+assert(messages[#messages]:find("missing", 1, true))
+devDB.weapons = { {id=200,offhand={id=400}}, {id=200} }
+equipped, equippedOff = 200, 400
+refreshBags()
+assert(ForeverWeaponSwapController.attrs.peacefulMacro:find("item:700", 1, true))
+devSlash("toggle")
+assert(equipped == 700)
+devDB.disableFishing=true
+equipped, equippedOff = 200, 400
+refreshBags()
+assert(not ForeverWeaponSwapController.attrs.peacefulMacro)
+devDB.disableFishing=false
+local realEquip = C_Item.EquipItemByName
+local requests = 0
+C_Item.EquipItemByName = function(ref, slot)
+    if slot == 17 then requests = requests + 1 else realEquip(ref,slot) end
+end
+equipped, equippedOff, carried = 300, nil, {200,300,400,700}
+refreshBags()
+devSlash("1")
+update("ITEM_LOCK_CHANGED")
+assert(requests == 1 and equipped == 200 and not equippedOff)
+RunTimers(2)
+assert(messages[#messages]:find("Main hand equipped",1,true))
+local beforeMessages = #messages
+devSlash("1")
+equippedOff=400
+update("PLAYER_EQUIPMENT_CHANGED",17)
+RunTimers(2)
+assert(requests == 2 and #messages == beforeMessages)
+C_Item.EquipItemByName = realEquip
+io.write("PASS: missing and overlapping sets advance the cycle, final off-hand confirmation and timeout\n")
+
+-- No protected click on right-click. Independent favorites survive changes of drawer owner.
+Enum = {WeaponSlot={MainHand=0, OffHand=1}, ItemEnchantType={Temporary=2,Imbue=3}}
+devDB.favorites = {}
+local askedSlot, timeLeft, charges = nil, 75000, 4
+C_Item.GetWeaponEnchantInfo = function(hand)
+    askedSlot = hand
+    return {{hasEnchant=true, enchantType=1}, {hasEnchant=true, enchantType=2,
+        timeLeft=timeLeft, charges=charges, enchantIconID=123},
+        {hasEnchant=true, enchantType=3, timeLeft=10000, enchantIconID=987}}
+end
+devDB.weapons[1]={id=300, offhand={id=600}}
+equipped, equippedOff, carried=300,600,{200,300,600,700}
+lureCounts[20749], lureCounts[8928] = 3, 2
+refreshBags()
+mainButton.scripts.OnEnter(mainButton)
+assert(askedSlot==0 and drawer.enchant.text:find("2m",1,true) and drawer.enchant.text:find("×4",1,true)
+    and drawer.enchant.text:find("|T987:14|t 10s",1,true))
+timeLeft, charges = 12000, restricted
+drawer.ticker.fn()
+assert(drawer.enchant.text:find("12s",1,true) and not drawer.enchant.text:find("×",1,true))
+appliedItem=nil
+click(oil, "RightButton")
+assert(devDB.favorites[16]==20749 and drawer.visible[1]==oil and oil.star.shown and not appliedItem)
+offButton.scripts.OnEnter(offButton)
+assert(askedSlot==1 and not oil.star.shown)
+if devDB.favorites[17]==8928 then click(poison,"RightButton") end
+click(poison, "RightButton")
+assert(devDB.favorites[17]==8928 and devDB.favorites[16]==20749 and drawer.visible[1]==poison)
+local liveCount = C_Item.GetItemCount
+local reads=0
+C_Item.GetItemCount = function(id) reads=reads+1; return liveCount(id) end
+update("ITEM_LOCK_CHANGED")
+assert(reads==0)
+rejectConsumable=true
+click(poison)
+assert(not appliedItem and poison.attrs['*macrotext1']=='/use [nocombat] item:8928'
+    and not poison.attrs['*target-slot1'] and not drawer.ticker)
+assert(reads>=2, "press and release still verify item count")
+rejectConsumable=false
+C_Item.GetItemCount = function() return restricted end
+offButton.scripts.OnEnter(offButton)
+assert(#drawer.visible==0)
+C_Item.GetItemCount=liveCount
+devDB.fishingPole=nil
+openPole()
+assert(fishDrawer.status.text=="Save a fishing pole first" and #fishDrawer.visible==0)
+devDB.fishingPole={id=700}
+equipped=300
+openPole()
+assert(fishDrawer.enchant.text=="")
+equipped=700
+update("PLAYER_EQUIPMENT_CHANGED",16)
+assert(askedSlot==0 and fishDrawer.enchant.text:find("12s",1,true))
+local ticker=fishDrawer.ticker
+fishDrawer:Hide()
+assert(ticker.cancelled)
+assert(layoutRows[1].heading=="Keybindings" and layoutRows[2].bindingIndex==2)
+assert(layoutRows[3].heading=="Visual Settings" and layoutRows[4].heading=="Fishing")
+assert(settings.FWS_hideFishingInCombat.watch=="FWS_disableFishing")
+settings.FWS_disableFishing.set(true)
+assert(not settings.FWS_excludeFishingFromCycle.enabled() and not settings.FWS_hideFishingInCombat.enabled())
+settings.FWS_disableFishing.set(false)
+assert(settings.FWS_excludeFishingFromCycle.enabled())
+settings.FWS_locked.set(true)
+assert(devDB.locked)
+io.write("PASS: per-hand status, favorites, guarded native targeting, lock-event costs and settings dependencies\n")
+
+-- The experimental exact command captures and targets real equipped links.
+local refA, refB = "item:200:101:::::5::60", "item:200:202:::::5::60"
+local handLinks, bagLinks = {[16]=refA, [17]=refB}, {}
+function GetInventoryItemLink(_,slot) return handLinks[slot] end
+C_Container.GetContainerItemLink=function(_,slot) return bagLinks[slot] end
+equipped, equippedOff = 200,200
+devSlash("exact 1")
+local exact=devDB.weapons[1]
+assert(exact.payload==refA and exact.offhand.payload==refB)
+local exactMacro="/equipslot 16 "..refA.."\n/equipslot 17 "..refB
+assert(mainButton.attrs['*macrotext1']==exactMacro)
+devSlash("macro 1")
+assert(ForeverWeaponSwapBar.macroPanel.edit.text:find(exactMacro,1,true))
+handLinks[17]=refA
+devSlash("exact 1")
+assert(devDB.weapons[1]==exact, "reject indistinguishable copies without losing the saved pair")
+handLinks[17]=restricted
+devSlash("exact 1")
+assert(devDB.weapons[1]==exact)
+equipped,equippedOff=300,nil
+handLinks={}
+carried,bagLinks={200,200,300},{refA,refB}
+refreshBags()
+assert(not mainButton.icon.desaturated and not offButton.icon.desaturated)
+local requestedRefs={}
+C_Item.EquipItemByName=function(ref,slot)
+    requestedRefs[slot]=ref
+    handLinks[slot]=ref
+    if slot==16 then equipped=200 else equippedOff=200 end
+end
+devSlash("1")
+assert(requestedRefs[16]==refA and requestedRefs[17]==refB and mainButton.selected.shown)
+-- Moving a different copy of the same ID into slot 17 between press and release must not poison it.
+offButton.scripts.OnEnter(offButton)
+appliedItem=nil
+press(poison)
+handLinks[17]=refA
+release(poison)
+assert(not appliedItem)
+C_Item.EquipItemByName=realEquip
+bagLinks[2]=nil
+refreshBags()
+assert(offButton.icon.desaturated and not mainButton.selected.shown)
+local getID=GetInventoryItemID
+GetInventoryItemID=function() return restricted end
+update("PLAYER_EQUIPMENT_CHANGED",16)
+assert(not mainButton.selected.shown)
+GetInventoryItemID=getID
+io.write("PASS: exact variant capture, saved macro, bag availability, paired equip and wrong-copy rejection\n")
+
+-- Damage to one saved record cannot prevent another set from loading.
+devDB.weapons={ {id=300, offhand="invalid"}, {id=200,payload="item:999:100"} }
+devDB.position={point="INVALID",relativePoint="CENTER",x=0,y=0}
+devDB.fishingPole="invalid"
+devDB.favorites={[16]=8928,[17]=-1}
+devDB.showEquipmentTooltips=false
+LoadAddon()
+local reload=frames[#frames]
+reload.scripts.OnEvent(reload,"ADDON_LOADED","ForeverWeaponSwap")
+assert(devDB.weapons[1].id==300 and not devDB.weapons[1].offhand and not devDB.weapons[2])
+assert(not devDB.position and not devDB.fishingPole and devDB.favorites[16]==8928 and not devDB.favorites[17])
+assert(devDB.showEquipmentTooltips==false)
+ForeverWeaponSwapChoice2.scripts.OnEnter(ForeverWeaponSwapChoice2)
+assert(GameTooltip:IsOwned(ForeverWeaponSwapChoice2) and GameTooltip.shown)
+io.write("PASS: damaged saved data recovers per entry and empty slots offer setup help\n")
