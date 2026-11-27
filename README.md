@@ -1,4 +1,4 @@
-# Forever Weapon Swap 1.8.2
+# Forever Weapon Swap 1.8.3
 
 Two compact main-hand/off-hand sets for World of Warcraft: Forever (Interface 16001). No dependencies. Existing 1.0 main-hand choices and position settings are retained.
 
@@ -52,6 +52,7 @@ Open **Options → AddOns → Forever Weapon Swap**, or type `/fws settings`. **
 
 - **Show equipment tooltips** defaults to off and covers main-hand weapons, off-hands, and the fishing pole.
 - **Show consumable tooltips** defaults to on and covers both weapon enhancements and fishing lures. Both drawers open on hover with either tooltip setting.
+- **Disable fishing** defaults to off. Check it to show just the two weapon sets and disable the fishing pole slot, lure drawer, and pole selection through the keybind or `/fws toggle`. The saved pole and fishing preferences return when you uncheck it. If changed during combat, the layout updates when combat ends. Use a weapon set to swap away from an already equipped pole.
 - **Exclude fishing pole from weapon cycle** defaults to off. Check it to skip the pole in the cycle and equip the pole by clicking it directly. The checkbox reflects each character's saved cycle preference from earlier versions.
 - **Hide fishing controls in combat** defaults to on. Uncheck it to keep the controls visible during combat. Pole setup and lure application are available outside combat.
 
@@ -138,6 +139,7 @@ Implementation is original; references were used to verify API patterns and rest
 
 ## Changelog
 
+- **1.8.3** — Added an opt-in **Disable fishing** setting that removes the fishing panel and lure drawer and limits the addon’s swap cycle to the two weapon sets.
 - **1.8.2** — Added separate tooltip settings for equipment and consumables. Equipment tooltips default to off, and consumable tooltips default to on. Added an **Exclude fishing pole from weapon cycle** checkbox that preserves the previous preference. Made both consumable drawers fit their icons and status messages. Moved the swap keybinding instructions to the top of the README.
 - **1.8.1** — Added click-to-equip and apply for fishing lures and weapon enhancements. Press to equip the saved item and release on the same icon once it is ready to apply.
 - **1.8.0** — Added per-hand drawers for 42 temporary weapon enhancements, including sharpening stones, weightstones, oils, and rogue poisons. Filtered consumables by weapon type and class, and added support for “Secret” Bait to the fishing drawer.

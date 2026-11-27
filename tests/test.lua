@@ -36,6 +36,7 @@ function methods:IsShown() return self.shown end
 function methods:SetHeight(height) self.height = height end
 function methods:GetHeight() return self.height end
 function methods:SetSize(width,height) self.width = width; self.height = height end
+function methods:SetWidth(width) self.width = width end
 function methods:GetWidth() return self.width end
 function methods:StartMoving() self.moving = true end
 function methods:StopMovingOrSizing() assert(not combat); self.moving = false end
@@ -60,7 +61,7 @@ function methods:SetCooldownFromDurationObject(duration, clearIfZero)
     self.duration = duration
 end
 function methods:Clear() self.duration = nil end
-for _, n in ipairs({'SetFrameStrata','SetClampedToScreen','SetMovable','SetBackdrop','SetBackdropColor','SetBackdropBorderColor','ClearAllPoints','EnableMouse','RegisterForDrag','RegisterForClicks','SetAllPoints','SetTexCoord','SetHighlightTexture','SetFrameLevel','SetWidth','SetNormalFontObject','SetHighlightFontObject','SetNormalTexture','SetDrawBling','SetDrawEdge','SetDrawSwipe','SetHideCountdownNumbers','SetMultiLine','SetAutoFocus','SetFontObject','SetFocus','ClearFocus','HighlightText'}) do methods[n] = noop end
+for _, n in ipairs({'SetFrameStrata','SetClampedToScreen','SetMovable','SetBackdrop','SetBackdropColor','SetBackdropBorderColor','ClearAllPoints','EnableMouse','RegisterForDrag','RegisterForClicks','SetAllPoints','SetTexCoord','SetHighlightTexture','SetFrameLevel','SetNormalFontObject','SetHighlightFontObject','SetNormalTexture','SetDrawBling','SetDrawEdge','SetDrawSwipe','SetHideCountdownNumbers','SetMultiLine','SetAutoFocus','SetFontObject','SetFocus','ClearFocus','HighlightText'}) do methods[n] = noop end
 function CreateFrame(frameType,name,parent,template)
  local f = setmetatable({attrs={},scripts={},events={},shown=true,name=name,template=template,frameType=frameType,parent=parent}, {__index=methods})
  frames[#frames+1]=f
@@ -129,13 +130,14 @@ function RegisterStateDriver(frame, state, value)
     assert(not combat, 'state driver reconfigured during combat')
     drivers[frame] = drivers[frame] or {}
     drivers[frame][state] = value
-    if state == 'visibility' then frame:Show() end
+    if state == 'visibility' then frame:SetShown(value ~= 'hide') end
 end
 local function ChangeCombat(active)
     combat = active
     for frame, states in pairs(drivers) do
         if states.visibility then
-            frame:SetShown(not (active and states.visibility:find('[combat] hide', 1, true)))
+            frame:SetShown(states.visibility ~= 'hide'
+                and not (active and states.visibility:find('[combat] hide', 1, true)))
         end
         if states.combat then
             local env = {self=frame, newstate=active and 'active' or 'idle'}
@@ -439,7 +441,9 @@ event('PLAYER_EQUIPMENT_CHANGED',16)
 slash('toggle')
 assert(equipped==100, 'slash toggle returns to set 1 from fishing')
 local excludePole = settings.FWS_excludeFishingFromCycle
+local disableFishing = settings.FWS_disableFishing
 assert(excludePole.checkbox and excludePole.default == false and excludePole.get() == false)
+assert(disableFishing.checkbox and disableFishing.default == false and not disableFishing.get())
 click(toggle)
 assert(equipped==700, 'one set cycles to the saved pole outside combat')
 click(toggle)
@@ -465,6 +469,31 @@ assert(equipped==700, 'excluded pole can still be equipped directly')
 click(toggle); click(toggle)
 assert(equipped==200, 'cycle leaves an excluded pole for the weapon sets')
 excludePole.set(false)
+
+-- Disable fishing while the next cycle choice is the pole and its drawer is open.
+arrow.scripts.OnEnter(arrow)
+assert(menu.shown and bar:GetWidth() == 167)
+local savedPole = ForeverWeaponSwapDB.fishingPole
+disableFishing.set(true)
+assert(bar:GetWidth() == 92 and not fishingPanel.shown and not menu.shown)
+assert(not control.attrs.peacefulMacro:find('item:700', 1, true), 'remove the cached pole action')
+pole.scripts.OnClick(pole, 'LeftButton')
+arrow.scripts.OnEnter(arrow)
+assert(equipped == 200 and not menu.shown, 'disabled fishing controls cannot act')
+click(toggle)
+assert(equipped == 100, 'keybind skips the pole while fishing is disabled')
+slash('toggle'); slash('toggle')
+assert(equipped == 100, 'slash cycle skips the pole too')
+ChangeCombat(true)
+ChangeCombat(false); event('PLAYER_REGEN_ENABLED')
+assert(not fishingPanel.shown, 'returning from combat does not reveal disabled fishing')
+disableFishing.set(false)
+assert(fishingPanel.shown and bar:GetWidth() == 167 and ForeverWeaponSwapDB.fishingPole == savedPole)
+click(toggle); click(toggle); click(toggle)
+assert(equipped == 100, 'reenabling fishing restores the previous cycle')
+click(toggle)
+assert(equipped == 200)
+
 carried={100,200,300,400}
 event('BAG_UPDATE_DELAYED')
 click(toggle)
@@ -537,6 +566,7 @@ assert(not bar.moving and ForeverWeaponSwapDB.position, 'stop deferred drag afte
 
 local priorBar=ForeverWeaponSwapBar
 excludePole.set(true)
+disableFishing.set(true)
 showGear.set(true)
 showConsumables.set(false)
 ChangeCombat(true)
@@ -550,6 +580,9 @@ assert(ForeverWeaponSwapBar~=priorBar)
 assert(ForeverWeaponSwapChoice1.attrs['*macrotext1']:find('/equipslot 17 item:400',1,true))
 assert(ForeverWeaponSwapController.attrs.weapon1, 'combat toggle configured after deferral')
 assert(settings.FWS_excludeFishingFromCycle.get(), 'saved false inclusion survives reload')
+assert(settings.FWS_disableFishing.get() and not ForeverWeaponSwapFishing.shown
+    and ForeverWeaponSwapBar:GetWidth() == 92, 'disabled fishing survives reload')
+settings.FWS_disableFishing.set(false)
 assert(settings.FWS_showEquipmentTooltips.get() and not settings.FWS_showConsumableTooltips.get(),
     'both tooltip preferences survive reload')
 io.write('PASS: drawer hover and lure actions, occupied-slot assignment, item cache, async off-hand equip, combat login/drag recovery\n')

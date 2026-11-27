@@ -29,6 +29,7 @@
 
 ## Checks and releases
 
+- Always update the Changelog section in `README.md` when making project changes. Record them under the version they belong to.
 - Run `python3 tests/run.py` from the checkout root or the extracted addon on Linux with `liblua5.4.so.0` installed. The mock checks data and Lua behavior. It does not model WoW's protected action execution, event timing, UI rendering, or taint.
 - For live changes, enable `/console scriptErrors 1`. Check the direct bindings and cycle outside and inside combat with one and two saved sets, including a pole. Reload in combat and confirm the UI initializes on leaving combat. Try entering combat while dragging the bar.
 - For drawer changes, hover each hand, cross into the drawer, then test a valid item, a locked or unequipped target, a swap between hover and click, and combat entry. Check that the consumable applies to the intended hand and that WoW handles any replacement warning. Repeat with a lure and the saved pole. Try a quick click and a held click from an unequipped weapon. From a pole, press an off-hand poison and verify both the gear swap and the actual enchant on slot 17. Release before the equip finishes and check that the old hand stays untouched. Check replacement prompts in-game.

@@ -2,7 +2,7 @@
 ## Title: Forever Weapon Swap
 ## Notes: Weapon sets with temporary enhancements, plus a fishing pole and lure drawer.
 ## Author: Wesley Stewart
-## Version: 1.8.2
+## Version: 1.8.3
 ## SavedVariablesPerCharacter: ForeverWeaponSwapDB
 
 Consumables.lua

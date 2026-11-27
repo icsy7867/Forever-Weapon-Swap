@@ -21,6 +21,9 @@ local GCD_SPELL = 61304
 local CLASSIC_GCD_SPELL = 29515
 local COMPACT_HEIGHT = 60
 local EXPANDED_HEIGHT = 91
+local WEAPON_PANEL_WIDTH = 92
+local FISHING_PANEL_WIDTH = 72
+local PANEL_GAP = 3
 local offhandLocations = { INVTYPE_WEAPON = true, INVTYPE_WEAPONOFFHAND = true, INVTYPE_SHIELD = true, INVTYPE_HOLDABLE = true }
 local function Weapon(index, offhand)
     local set = db.weapons[index]
@@ -82,6 +85,7 @@ end
 local function IsWeaponSet(index)
     local set = db.weapons[index]
     return set and set.id and not IsFishingPole(set.id)
+        and not (set.offhand and IsFishingPole(set.offhand.id))
 end
 
 local function EquippedChoice()
@@ -170,14 +174,14 @@ end
 
 local function MacroText(index)
     local set = db.weapons[index]
-    if not set or not set.id then return end
+    if not IsWeaponSet(index) then return end
     local text = "/equipslot 16 item:" .. set.id
     if set.offhand then text = text .. "\n/equipslot 17 item:" .. set.offhand.id end
     return text
 end
 
 local function NextOutOfCombat()
-    local pole = db.fishingPole
+    local pole = not db.disableFishing and db.fishingPole
     local current = EquippedChoice() or 0
     if pole and EquippedID() == pole.id then current = 3 end
     for step = 1, 3 do
@@ -204,7 +208,7 @@ local function ConfigureActions()
     if not db or not controller or InCombatLockdown() then return end
     for i = 1, 2 do
         local macro = MacroText(i)
-        controller:SetAttribute("weapon" .. i, IsWeaponSet(i) and macro or nil)
+        controller:SetAttribute("weapon" .. i, macro)
         buttons[i]:SetAttribute("*type1", macro and "macro" or nil)
         buttons[i]:SetAttribute("*macrotext1", macro)
         local offhand = buttons[i].offhandButton
@@ -348,15 +352,26 @@ local function ApplyAppearance()
     if InCombatLockdown() then return end
     bar:SetScale(db.scale)
     bar:SetAlpha(db.opacity / 100)
-    if fishing.hideInCombat ~= db.hideFishingInCombat then
-        local rule = db.hideFishingInCombat and "[combat] hide; show" or "show"
+    local width = WEAPON_PANEL_WIDTH
+    local rule = "hide"
+    if not db.disableFishing then
+        width = width + PANEL_GAP + FISHING_PANEL_WIDTH
+        rule = db.hideFishingInCombat and "[combat] hide; show" or "show"
+    end
+    if bar:GetWidth() ~= width then bar:SetWidth(width) end
+    if fishing.visibilityRule ~= rule then
+        if db.disableFishing then
+            fishing.menu:Hide()
+            HideTooltip(fishing.pole)
+        end
         RegisterStateDriver(fishing, "visibility", rule)
-        fishing.hideInCombat = db.hideFishingInCombat
+        fishing:SetShown(not db.disableFishing)
+        fishing.visibilityRule = rule
     end
 end
 
 local function SavePole(id)
-    if InCombatLockdown() then return false end
+    if db.disableFishing or InCombatLockdown() then return false end
     if not IsFishingPole(id) then
         Message("Choose a fishing pole.")
         return false
@@ -377,6 +392,7 @@ local function DropPole()
 end
 
 local function EquipPole()
+    if db.disableFishing then return end
     pendingOffhand = nil
     local pole = db.fishingPole
     if not pole then
@@ -394,6 +410,7 @@ local function CursorBusy()
 end
 
 local function FishingTarget()
+    if db.disableFishing then return end
     return db.fishingPole, MAIN_HAND
 end
 
@@ -440,7 +457,7 @@ local function EquipSet(index)
     if InCombatLockdown() then Message("Slash equipping is out of combat only. Use the keybind/UI in combat, or /fws macro " .. index .. " to copy a native macro after combat."); return end
     pendingOffhand = nil
     local set = db.weapons[index]
-    if not set then Message("Set " .. index .. " is empty."); return end
+    if not IsWeaponSet(index) then Message("Configure weapon set " .. index .. " first."); return end
     for _, item in ipairs({ set, set.offhand }) do
         if not Carried(item.id) then
             Message("Set " .. index .. " is missing " .. (item.link or ("item " .. item.id)) .. ".")
@@ -699,8 +716,8 @@ end
 
 local function CreateFishing()
     fishing = CreateFrame("Frame", "ForeverWeaponSwapFishing", bar, "BackdropTemplate")
-    fishing:SetSize(72, COMPACT_HEIGHT)
-    fishing:SetPoint("TOPLEFT", bar, "TOPLEFT", 95, 0)
+    fishing:SetSize(FISHING_PANEL_WIDTH, COMPACT_HEIGHT)
+    fishing:SetPoint("TOPLEFT", bar, "TOPLEFT", WEAPON_PANEL_WIDTH + PANEL_GAP, 0)
     SetPanelBackdrop(fishing)
     local heading = fishing:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     heading:SetPoint("TOP", 0, -3)
@@ -720,6 +737,7 @@ local function CreateFishing()
     pole:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
     pole:SetScript("OnReceiveDrag", DropPole)
     pole:SetScript("OnClick", function(_, mouseButton)
+        if db.disableFishing then return end
         if InCombatLockdown() then Message("Fishing controls are available outside combat."); return end
         if mouseButton == "RightButton" then
             if IsShiftKeyDown() then
@@ -737,7 +755,7 @@ local function CreateFishing()
         end
     end)
     pole:SetScript("OnEnter", function(self)
-        if not db.showEquipmentTooltips then return end
+        if db.disableFishing or not db.showEquipmentTooltips then return end
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         if db.fishingPole then
             GameTooltip:SetItemByID(db.fishingPole.id)
@@ -756,7 +774,7 @@ local function CreateFishing()
     fishing.menu = menu
     menu:SetPoint("TOP", fishing, "BOTTOM", 0, -3)
     local function OpenDrawer()
-        if InCombatLockdown() or CursorBusy() then return end
+        if db.disableFishing or InCombatLockdown() or CursorBusy() then return end
         weaponDrawer:Hide()
         -- The pole and chevron share one hover region.
         menu:Open(fishing)
@@ -794,6 +812,11 @@ local function RegisterSettings()
     opacityOptions:SetLabelFormatter(label, function(value) return ("%d%%"):format(value) end)
     Settings.CreateSlider(settingsCategory, size, sizeOptions, "Change the size of the weapon swap bar.")
     Settings.CreateSlider(settingsCategory, opacity, opacityOptions, "Change how transparent the bar is.")
+    local disable = Register("disableFishing", "Disable fishing", Settings.VarType.Boolean, false, function()
+        ApplyAppearance()
+        SyncToggle()
+    end)
+    Settings.CreateCheckbox(settingsCategory, disable, "Remove the fishing panel and skip the pole when cycling. The saved pole is kept.")
     local hide = Register("hideFishingInCombat", "Hide fishing controls in combat", Settings.VarType.Boolean, true, ApplyAppearance)
     Settings.CreateCheckbox(settingsCategory, hide, "Hide the fishing pole and lure arrow while in combat.")
     local equipmentTooltips = Register("showEquipmentTooltips", "Show equipment tooltips", Settings.VarType.Boolean, false)
@@ -823,7 +846,7 @@ end
 local function CreateUI()
     controller = CreateFrame("Frame", "ForeverWeaponSwapController", UIParent, "SecureHandlerBaseTemplate")
     bar = CreateFrame("Frame", "ForeverWeaponSwapBar", UIParent)
-    bar:SetSize(167, COMPACT_HEIGHT)
+    bar:SetSize(WEAPON_PANEL_WIDTH, COMPACT_HEIGHT)
     bar:SetFrameStrata("MEDIUM")
     bar:SetClampedToScreen(true)
     bar:SetMovable(true)
@@ -832,7 +855,7 @@ local function CreateUI()
     local weaponBackdrop = CreateFrame("Frame", nil, bar, "BackdropTemplate")
     weaponBackdrop:SetPoint("TOPLEFT", 0, 0)
     weaponBackdrop:SetPoint("BOTTOMLEFT", 0, 0)
-    weaponBackdrop:SetWidth(92)
+    weaponBackdrop:SetWidth(WEAPON_PANEL_WIDTH)
     weaponBackdrop:SetFrameLevel(bar:GetFrameLevel())
     SetPanelBackdrop(weaponBackdrop)
     local handle = CreateFrame("Frame", nil, bar)
@@ -1066,6 +1089,7 @@ events:SetScript("OnEvent", function(_, event, arg1)
         db.scale = math.max(0.6, math.min(2, db.scale))
         db.opacity = math.max(20, math.min(100, tonumber(db.opacity) or 100))
         if db.hideFishingInCombat == nil then db.hideFishingInCombat = true end
+        if db.disableFishing == nil then db.disableFishing = false end
         if db.includeFishingInCycle == nil then db.includeFishingInCycle = true end
         if db.showEquipmentTooltips == nil then db.showEquipmentTooltips = false end
         if db.showConsumableTooltips == nil then db.showConsumableTooltips = true end
