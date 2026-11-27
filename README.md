@@ -1,4 +1,4 @@
-# Forever Weapon Swap 1.9.0-dev
+# Forever Weapon Swap 1.9.0
 
 Two compact main-hand/off-hand sets for World of Warcraft: Forever (Interface 16001). No dependencies. Existing 1.0 main-hand choices and position settings are retained.
 
@@ -143,13 +143,13 @@ Implementation is original; references were used to verify API patterns and rest
 
 ## Changelog
 
-- **1.9.0-dev** — Edit the cycle binding directly in addon settings. Visual Settings and Fishing now group related options, with consistent fishing label sizes.
+- **1.9.0** — Edit the cycle binding directly in addon settings. Visual Settings and Fishing now group related options, with consistent fishing label sizes.
 
-- **1.9.0-dev** — Added a [developer glossary](GLOSSARY.md) covering addon terminology, Forever APIs, and the repository map.
+- **1.9.0** — Added a [developer glossary](GLOSSARY.md) covering addon terminology, Forever APIs, and the repository map.
 
-- **1.9.0-dev** — Out-of-combat cycling skips missing and already-matching sets. Paired slash swaps confirm the off-hand and report which part timed out.
-- **1.9.0-dev** — Added per-hand enhancement favorites, active enhancement and lure timers and charges, and conditional native item targeting. Drawer lock updates reuse the visible list and counts.
-- **1.9.0-dev** — Added experimental equipped-variant capture (`/fws exact 1|2`), per-entry saved-data recovery, current key and lock in Settings, shorter fishing options, and setup hints for empty slots.
+- **1.9.0** — Out-of-combat cycling skips missing and already-matching sets. Paired slash swaps confirm the off-hand and report which part timed out.
+- **1.9.0** — Added per-hand enhancement favorites, active enhancement and lure timers and charges, and conditional native item targeting. Drawer lock updates reuse the visible list and counts.
+- **1.9.0** — Added experimental equipped-variant capture (`/fws exact 1|2`), per-entry saved-data recovery, current key and lock in Settings, shorter fishing options, and setup hints for empty slots.
 
 - **1.8.3** — Added an opt-in **Disable fishing** setting that removes the fishing panel and lure drawer and limits the addon’s swap cycle to the two weapon sets.
 - **1.8.2** — Added separate tooltip settings for equipment and consumables. Equipment tooltips default to off, and consumable tooltips default to on. Added an **Exclude fishing pole from weapon cycle** checkbox that preserves the previous preference. Made both consumable drawers fit their icons and status messages. Moved the swap keybinding instructions to the top of the README.
