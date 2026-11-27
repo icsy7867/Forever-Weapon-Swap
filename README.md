@@ -143,6 +143,8 @@ Implementation is original; references were used to verify API patterns and rest
 
 ## Changelog
 
+- **1.9.0-dev** — Added a [developer glossary](GLOSSARY.md) covering addon terminology, Forever APIs, and the repository map.
+
 - **1.9.0-dev** — Out-of-combat cycling skips missing and already-matching sets. Paired slash swaps confirm the off-hand and report which part timed out.
 - **1.9.0-dev** — Added per-hand enhancement favorites, active enhancement and lure timers and charges, and conditional native item targeting. Drawer lock updates reuse the visible list and counts.
 - **1.9.0-dev** — Added experimental equipped-variant capture (`/fws exact 1|2`), per-entry saved-data recovery, current key and lock in Settings, shorter fishing options, and setup hints for empty slots.

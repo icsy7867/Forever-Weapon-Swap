@@ -1,5 +1,11 @@
 # Forever Weapon Swap
 
+## Starting a session and maintaining the glossary
+
+Read [GLOSSARY.md](GLOSSARY.md) at the start of a fresh session. It maps player language to the repo's files, identifiers, events and Forever-specific API behavior. Use it to locate the relevant implementation and tests. Consult README.md for player instructions.
+
+Update the glossary in the same change whenever a task introduces terminology, changes the meaning of an entry, or requires a discovery search that yields a reusable fact. Record the term, what it means here, and the call site, test, Forever source or client build that supports it. Revise an existing entry when possible. Label mock observations and findings awaiting live verification explicitly. If a search only confirms an accurate entry, add a better source when available and avoid duplicating the definition.
+
 ## Project map
 
 - Target WoW Forever, interface `16001`, and write Lua 5.1-compatible code with no runtime dependencies.
@@ -36,4 +42,4 @@
 - Run `python3 tests/run.py` from the checkout root or the extracted addon on Linux with `liblua5.4.so.0` installed. The mock checks data and Lua behavior. It does not model WoW's protected action execution, event timing, UI rendering, or taint.
 - For live changes, enable `/console scriptErrors 1`. Check the direct bindings and cycle outside and inside combat with one and two saved sets, including a pole. Reload in combat and confirm the UI initializes on leaving combat. Try entering combat while dragging the bar.
 - For drawer changes, hover each hand, cross into the drawer, then test a valid item, a locked or unequipped target, a swap between hover and click, and combat entry. Check that the consumable applies to the intended hand and that WoW handles any replacement warning. Repeat with a lure and the saved pole. Try a quick click and a held click from an unequipped weapon. From a pole, press an off-hand poison and verify both the gear swap and the actual enchant on slot 17. Release before the equip finishes and check that the old hand stays untouched. Check replacement prompts in-game.
-- Package the `ForeverWeaponSwap/` folder with its TOC, bindings, both Lua files, `README.md`, this file, and the mock suite under `tests/`. Check the TOC load order and run the tests from the extracted ZIP. Update both the README and TOC version for addon releases.
+- Package the `ForeverWeaponSwap/` folder with its TOC, bindings, both Lua files, `README.md`, `GLOSSARY.md`, this file, and the mock suite under `tests/`. Check the TOC load order and run the tests from the extracted ZIP. Update both the README and TOC version for addon releases.
