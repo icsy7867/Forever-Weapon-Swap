@@ -76,6 +76,34 @@ local function EquippedID(slot)
     if Public(id) then return id end
 end
 
+-- Use the invariant item fields through suffix for variant matching. Later fields
+-- (including link level) can change when the client renders the same item again.
+local function ItemPayload(link)
+    if not Public(link) or type(link) ~= "string" then return end
+    return link:match("|H(item:[%d:%-]+)|h") or link:match("^(item:[%d:%-]+)$")
+end
+
+local function VariantKey(payload)
+    if not payload then return end
+    local fields = {}
+    for field in (payload:sub(6) .. ":"):gmatch("([^:]*):") do
+        fields[#fields + 1] = tonumber(field) or 0
+        if #fields == 7 then break end
+    end
+    for i = #fields + 1, 7 do fields[i] = 0 end
+    return table.concat(fields, ":")
+end
+
+local function ItemRef(item)
+    return item.payload or ("item:" .. item.id)
+end
+
+local function Equipped(item, slot)
+    if EquippedID(slot) ~= item.id then return false end
+    if not item.payload then return true end
+    return VariantKey(ItemPayload(GetInventoryItemLink("player", slot))) == item.variant
+end
+
 local function IsFishingPole(id)
     if not id then return false end
     local _, _, _, _, _, class, subclass = C_Item.GetItemInfoInstant(id)
@@ -89,22 +117,33 @@ local function IsWeaponSet(index)
 end
 
 local function EquippedChoice()
-    local id = EquippedID()
     local fallback
     for i = 1, 2 do
         local set = db.weapons[i]
-        if set and set.id == id then
-            if set.offhand and set.offhand.id == EquippedID(OFF_HAND) then return i end
+        if set and Equipped(set, MAIN_HAND) then
+            if set.offhand and Equipped(set.offhand, OFF_HAND) then return i end
             if not set.offhand and not fallback then fallback = i end
         end
     end
     return fallback
 end
 
-local bagItems
+local bagItems, bagVariants
 
-local function Carried(id)
-    if EquippedID() == id or EquippedID(OFF_HAND) == id then return true end
+local function Carried(item)
+    if Equipped(item, MAIN_HAND) or Equipped(item, OFF_HAND) then return true end
+    if item.payload then
+        if not bagVariants then
+            bagVariants = {}
+            for bag = 0, NUM_BAG_SLOTS or 4 do
+                for slot = 1, C_Container.GetContainerNumSlots(bag) do
+                    local key = VariantKey(ItemPayload(C_Container.GetContainerItemLink(bag, slot)))
+                    if key then bagVariants[key] = true end
+                end
+            end
+        end
+        return bagVariants[item.variant] == true
+    end
     if not bagItems then
         bagItems = {}
         for bag = 0, NUM_BAG_SLOTS or 4 do
@@ -114,18 +153,21 @@ local function Carried(id)
             end
         end
     end
-    return bagItems[id] == true
+    return bagItems[item.id] == true
 end
 
+local gcdSpell
 local function UpdateGlobalCooldown()
     local duration
     if C_Spell.GetSpellCooldownDuration then
         -- Some Forever builds expose the Classic dummy spell instead of 61304.
-        local spell = GCD_SPELL
-        if C_Spell.DoesSpellExist and not C_Spell.DoesSpellExist(spell) then
-            spell = CLASSIC_GCD_SPELL
+        if not gcdSpell then
+            gcdSpell = GCD_SPELL
+            if C_Spell.DoesSpellExist and not C_Spell.DoesSpellExist(gcdSpell) then
+                gcdSpell = CLASSIC_GCD_SPELL
+            end
         end
-        duration = C_Spell.GetSpellCooldownDuration(spell)
+        duration = C_Spell.GetSpellCooldownDuration(gcdSpell)
     end
     for _, button in ipairs(weaponButtons) do
         local cooldown = button.cooldown
@@ -140,7 +182,7 @@ end
 
 local function UpdateFishingIcon()
     local pole = db.fishingPole
-    local present = pole and Carried(pole.id)
+    local present = pole and Carried(pole)
     local selected = pole and EquippedID() == pole.id
     local button = fishing.pole
     button.icon:SetTexture(pole and C_Item.GetItemIconByID(pole.id) or 132932)
@@ -160,7 +202,7 @@ local function UpdateVisuals()
         local weapon = Weapon(button.choice, button.isOffhand)
         local texture = weapon and C_Item.GetItemIconByID(weapon.id)
         button.icon:SetTexture(texture or QUESTION)
-        local present = weapon and Carried(weapon.id)
+        local present = weapon and Carried(weapon)
         button.icon:SetDesaturated(weapon ~= nil and not present)
         button.icon:SetAlpha(weapon and (present and 1 or 0.4) or 0.35)
         local selected = equipped == button.choice and weapon ~= nil
@@ -175,8 +217,8 @@ end
 local function MacroText(index)
     local set = db.weapons[index]
     if not IsWeaponSet(index) then return end
-    local text = "/equipslot 16 item:" .. set.id
-    if set.offhand then text = text .. "\n/equipslot 17 item:" .. set.offhand.id end
+    local text = "/equipslot 16 " .. ItemRef(set)
+    if set.offhand then text = text .. "\n/equipslot 17 " .. ItemRef(set.offhand) end
     return text
 end
 
@@ -187,11 +229,15 @@ local function NextOutOfCombat()
     for step = 1, 3 do
         local index = (current + step - 1) % 3 + 1
         if index == 3 then
-            if db.includeFishingInCycle and current ~= 3 and pole and Carried(pole.id) then
+            if db.includeFishingInCycle and current ~= 3 and pole and Carried(pole) then
                 return index, "/equipslot [nocombat] 16 item:" .. pole.id
             end
         elseif IsWeaponSet(index) then
-            return index, MacroText(index)
+            local set = db.weapons[index]
+            local matches = Equipped(set, MAIN_HAND) and (not set.offhand or Equipped(set.offhand, OFF_HAND))
+            if not matches and Carried(set) and (not set.offhand or Carried(set.offhand)) then
+                return index, MacroText(index)
+            end
         end
     end
 end
@@ -219,9 +265,17 @@ local function ConfigureActions()
     SyncToggle()
 end
 
-local function ReadItem(id, offhand, main)
+local function ReadItem(id, offhand, main, exactLink)
     if not id then return nil, "No item is equipped in that hand." end
     local _, _, _, location, _, classID = C_Item.GetItemInfoInstant(id)
+    local payload, variant
+    if exactLink ~= nil then
+        payload = ItemPayload(exactLink)
+        if not payload or tonumber(payload:match("^item:(%d+)")) ~= id then
+            return nil, "Item details are unavailable. Try saving the equipped pair again."
+        end
+        variant = VariantKey(payload)
+    end
     if offhand then
         if not main then return nil, "Save the main-hand weapon first." end
         local _, _, _, mainLocation = C_Item.GetItemInfoInstant(main.id)
@@ -229,28 +283,37 @@ local function ReadItem(id, offhand, main)
         if not offhandLocations[location] or (classID ~= 2 and classID ~= 4) then
             return nil, "Choose an off-hand weapon, shield, or held off-hand item."
         end
-        if main.id == id then return nil, "Two copies of the same item ID are unsupported in one set." end
+        if main.id == id and (not variant or not main.variant or main.variant == variant) then
+            return nil, "Same-ID weapons need distinguishable enchants or suffixes. Use /fws exact 1 or 2."
+        end
     elseif IsFishingPole(id) then
         return nil, "Save fishing poles in the Fishing slot."
     elseif classID ~= 2 or not validLocations[location] then
         return nil, "Choose a one-handed or two-handed main-hand weapon."
     end
     local _, link = C_Item.GetItemInfo(id)
-    return { id = id, link = link }, nil, location
+    return { id = id, link = exactLink or link, payload = payload, variant = variant }, nil, location
 end
 
 local function RequestItemLink(item)
     if item and not item.link then C_Item.RequestLoadItemDataByID(item.id) end
 end
 
-local function SaveEquipped(index)
+local function SaveEquipped(index, exact)
     for slot = MAIN_HAND, OFF_HAND do
         if IsInventoryItemLocked(slot) then
             Message("An item is moving. Wait for the swap to finish and save again.")
             return
         end
     end
-    local main, err = ReadItem(EquippedID(), false)
+    local function EquippedLink(slot)
+        if exact then
+            local link = GetInventoryItemLink("player", slot)
+            if Public(link) and type(link) == "string" then return link end
+            return false
+        end
+    end
+    local main, err = ReadItem(EquippedID(), false, nil, EquippedLink(MAIN_HAND))
     if not main then Message(err); return end
     local offID = GetInventoryItemID("player", OFF_HAND)
     if not Public(offID) or (not offID and GetInventoryItemTexture("player", OFF_HAND)) then
@@ -258,7 +321,7 @@ local function SaveEquipped(index)
         return
     end
     if offID then
-        main.offhand, err = ReadItem(offID, true, main)
+        main.offhand, err = ReadItem(offID, true, main, EquippedLink(OFF_HAND))
         if err then Message(err); return end
     end
     db.weapons[index] = main
@@ -312,20 +375,24 @@ local function HideTooltip(owner)
 end
 
 local function Tooltip(button, drawerOpened)
-    if not db.showEquipmentTooltips then return end
+    local weapon = Weapon(button.choice, button.isOffhand)
+    if weapon and not db.showEquipmentTooltips then return end
     local anchor = drawerOpened and not button.isOffhand and "ANCHOR_BOTTOM" or "ANCHOR_TOP"
     GameTooltip:SetOwner(button, anchor)
-    local weapon = Weapon(button.choice, button.isOffhand)
     if weapon then
-        GameTooltip:SetItemByID(weapon.id)
-        if not Carried(weapon.id) then GameTooltip:AddLine("Not in your bags or equipped", 1, 0.25, 0.25) end
+        if weapon.payload then GameTooltip:SetHyperlink(weapon.payload)
+        else GameTooltip:SetItemByID(weapon.id) end
+        if not Carried(weapon) then GameTooltip:AddLine("Not in your bags or equipped", 1, 0.25, 0.25) end
     elseif button.isOffhand then
         GameTooltip:AddLine("Set " .. button.choice .. " optional off-hand", 1, 0.82, 0)
         GameTooltip:AddLine("Drop the item here to save it", 0.8, 0.8, 0.8)
         GameTooltip:Show()
         return
     else
-        GameTooltip:AddLine("Set " .. button.choice .. " main-hand", 1, 0.82, 0)
+        GameTooltip:AddLine("Drop a main-hand weapon here", 1, 0.82, 0)
+        GameTooltip:AddLine("Or right-click to save your equipped weapon", 0.8, 0.8, 0.8)
+        GameTooltip:Show()
+        return
     end
     GameTooltip:AddLine("Left-click: equip this entire set", 1, 1, 1)
     GameTooltip:AddLine("Drop a weapon here to save it", 0.8, 0.8, 0.8)
@@ -397,7 +464,7 @@ local function EquipPole()
     local pole = db.fishingPole
     if not pole then
         Message("Drop a fishing pole onto the Fishing slot.")
-    elseif not Carried(pole.id) then
+    elseif not Carried(pole) then
         Message("Put your saved fishing pole in your bags first.")
     elseif EquippedID() ~= pole.id then
         C_Item.EquipItemByName("item:" .. pole.id, MAIN_HAND)
@@ -440,17 +507,20 @@ local function FinishOffhandSwap()
         return
     end
     local mainID = EquippedID()
-    if mainID ~= swap.set.id then
+    if not Equipped(swap.set, MAIN_HAND) then
         -- An unrelated main-hand change supersedes this request.
         if mainID and (swap.sawMain or mainID ~= swap.previousMain) then pendingOffhand = nil end
         return
     end
     swap.sawMain = true
-    if IsInventoryItemLocked(MAIN_HAND) or IsInventoryItemLocked(OFF_HAND) then return end
-    pendingOffhand = nil
-    if EquippedID(OFF_HAND) ~= swap.offhand.id then
-        C_Item.EquipItemByName("item:" .. swap.offhand.id, OFF_HAND)
+    if Equipped(swap.offhand, OFF_HAND) then
+        pendingOffhand = nil
+        return
     end
+    if swap.requested or IsInventoryItemLocked(MAIN_HAND) or IsInventoryItemLocked(OFF_HAND) then return end
+    swap.requested = true
+    C_Item.EquipItemByName(ItemRef(swap.offhand), OFF_HAND)
+    if Equipped(swap.offhand, OFF_HAND) and pendingOffhand == swap then pendingOffhand = nil end
 end
 
 local function EquipSet(index)
@@ -459,23 +529,30 @@ local function EquipSet(index)
     local set = db.weapons[index]
     if not IsWeaponSet(index) then Message("Configure weapon set " .. index .. " first."); return end
     for _, item in ipairs({ set, set.offhand }) do
-        if not Carried(item.id) then
+        if not Carried(item) then
             Message("Set " .. index .. " is missing " .. (item.link or ("item " .. item.id)) .. ".")
             return
         end
     end
     local previousMain = EquippedID()
-    if set.offhand and EquippedID(OFF_HAND) ~= set.offhand.id then
+    if set.offhand and (not Equipped(set.offhand, OFF_HAND) or not Equipped(set, MAIN_HAND)) then
         local swap = { index = index, set = set, offhand = set.offhand, previousMain = previousMain }
         pendingOffhand = swap
         C_Timer.After(2, function()
             if pendingOffhand == swap then
                 pendingOffhand = nil
-                Message("Off-hand swap timed out. Try equipping the set again.")
+                if db.weapons[index] ~= set or set.offhand ~= swap.offhand or InCombatLockdown() then return end
+                if Equipped(set, MAIN_HAND) then
+                    if not Equipped(swap.offhand, OFF_HAND) then
+                        Message("Main hand equipped. Off-hand swap timed out for " .. (swap.offhand.link or ItemRef(swap.offhand)) .. ".")
+                    end
+                else
+                    Message("Set " .. index .. " swap timed out waiting for the main hand.")
+                end
             end
         end)
     end
-    if previousMain ~= set.id then C_Item.EquipItemByName("item:" .. set.id, MAIN_HAND) end
+    if not Equipped(set, MAIN_HAND) then C_Item.EquipItemByName(ItemRef(set), MAIN_HAND) end
     FinishOffhandSwap()
     UpdateVisuals()
     SyncToggle()
@@ -483,9 +560,9 @@ end
 
 -- A pole, a two-hander, or the target itself in slot 16 may have to move first.
 local function NeedsMainForOffhand(item, slot)
-    if slot ~= OFF_HAND or EquippedID(slot) == item.id then return false end
+    if slot ~= OFF_HAND or Equipped(item, slot) then return false end
     local main = EquippedID(MAIN_HAND)
-    if not main or main == item.id then return true end
+    if not main or Equipped(item, MAIN_HAND) then return true end
     local _, _, _, location = C_Item.GetItemInfoInstant(main)
     return location == "INVTYPE_2HWEAPON"
 end
@@ -501,12 +578,12 @@ local drawerHints = {
 }
 
 local function DrawerBlockReason(menu, item, slot)
-    if not item or not Carried(item.id) then return drawerHints.missing end
+    if not item or not Carried(item) then return drawerHints.missing end
     if CursorBusy() then return drawerHints.cursor end
     if IsInventoryItemLocked(slot) then return drawerHints.waiting end
-    if EquippedID(slot) ~= item.id then
+    if not Equipped(item, slot) then
         if IsInventoryItemLocked(slot == MAIN_HAND and OFF_HAND or MAIN_HAND) then return drawerHints.waiting end
-        if NeedsMainForOffhand(item, slot) and not Carried(Weapon(menu.owner.choice).id) then
+        if NeedsMainForOffhand(item, slot) and not Carried(Weapon(menu.owner.choice)) then
             return drawerHints.missingMain
         end
     end
@@ -517,43 +594,96 @@ local function ConsumableCount(id)
     if Public(count) and count and count > 0 then return count end
 end
 
+local function EnchantText(enchant)
+    local icon, time, charges = enchant.enchantIconID, enchant.timeLeft, enchant.charges
+    local text = Public(icon) and type(icon) == "number" and ("|T%d:14|t"):format(icon) or "Active"
+    if Public(time) and type(time) == "number" and time > 0 then
+        local seconds = math.ceil(time / 1000)
+        text = text .. (seconds >= 60 and (" %dm"):format(math.ceil(seconds / 60)) or (" %ds"):format(seconds))
+    end
+    if Public(charges) and type(charges) == "number" and charges > 0 then
+        text = text .. (" ×%d"):format(charges)
+    end
+    return text
+end
+
+local function RefreshEnchant(menu)
+    if not C_Item.GetWeaponEnchantInfo then return end
+    local item, slot = menu.targetItem, menu.targetSlot
+    local text = ""
+    if item and Equipped(item, slot) then
+        local hand = slot == OFF_HAND and Enum.WeaponSlot.OffHand or Enum.WeaponSlot.MainHand
+        local enchants = C_Item.GetWeaponEnchantInfo(hand)
+        if Public(enchants) and type(enchants) == "table" then
+            local temporary, imbue, unknown
+            for _, enchant in pairs(enchants) do
+                if not Public(enchant) or not Public(enchant.hasEnchant) or not Public(enchant.enchantType) then
+                    unknown = true
+                elseif enchant.hasEnchant then
+                    if enchant.enchantType == Enum.ItemEnchantType.Temporary then temporary = EnchantText(enchant)
+                    elseif enchant.enchantType == Enum.ItemEnchantType.Imbue then imbue = EnchantText(enchant) end
+                end
+            end
+            if temporary and imbue then text = temporary .. "\n" .. imbue
+            elseif temporary or imbue then text = temporary or imbue
+            elseif not unknown then text = menu.accepts and "No enhancement" or "No lure" end
+        end
+    end
+    menu.enchant:SetText(text)
+end
+
+local function UpdateDrawerStatus(menu)
+    local item, slot = menu.targetItem, menu.targetSlot
+    local blocked = DrawerBlockReason(menu, item, slot)
+    local hint
+    if not item and not menu.accepts then hint = "Save a fishing pole first"
+    elseif #menu.visible == 0 then hint = menu.emptyText
+    elseif blocked then hint = blocked
+    elseif menu.pressedRow then hint = Equipped(item, slot) and drawerHints.release or drawerHints.waiting
+    else hint = Equipped(item, slot) and drawerHints.apply or drawerHints.equip end
+    menu.status:SetText(hint)
+    for _, row in ipairs(menu.visible) do
+        row.icon:SetDesaturated(blocked ~= nil)
+        row.icon:SetAlpha(blocked and 0.45 or 1)
+    end
+    RefreshEnchant(menu)
+end
+
 local function RefreshDrawer(menu)
     local item, slot, subclass = menu.getTarget(menu)
     local _, class = UnitClass("player")
-    local blocked = DrawerBlockReason(menu, item, slot)
-    local equipped = item and EquippedID(slot) == item.id
     local visible = {}
-    menu.targetItem = item
-    menu.targetSlot = slot
+    local favorite = menu.accepts and db.favorites[slot]
     for _, row in ipairs(menu.rows) do
         local entry = row.entry
         local count
-        if slot and (not menu.accepts or menu.accepts(entry, subclass, class == "ROGUE")) then
+        if item and (not menu.accepts or menu.accepts(entry, subclass, class == "ROGUE")) then
             count = ConsumableCount(entry.id)
         end
         if count then
-            visible[#visible + 1] = row
+            if entry.id == favorite then table.insert(visible, 1, row)
+            else visible[#visible + 1] = row end
             row.count:SetText(count)
             row.icon:SetTexture(C_Item.GetItemIconByID(entry.id) or QUESTION)
-            row.icon:SetDesaturated(blocked ~= nil)
-            row.icon:SetAlpha(blocked and 0.45 or 1)
+            if row.star then row.star:SetShown(entry.id == favorite) end
         end
         row:SetShown(count ~= nil)
     end
-
+    if menu.pressedRow then
+        for i, row in ipairs(menu.visible) do
+            if row == menu.pressedRow and visible[i] ~= row then menu.pressedRow = nil end
+        end
+    end
+    menu.visible, menu.targetItem, menu.targetSlot = visible, item, slot
+    UpdateDrawerStatus(menu)
     local count = #visible
     local columns = math.max(1, math.min(6, count))
     local height = math.ceil(count / columns) * 30
-    local hint
-    if count == 0 then hint = menu.emptyText
-    elseif blocked then hint = blocked
-    elseif menu.pressedRow then hint = equipped and drawerHints.release or drawerHints.waiting
-    else hint = equipped and drawerHints.apply or drawerHints.equip end
-    menu.status:SetText(hint)
-    -- Keep the row under the pointer when an equipment event changes the hint.
+    -- Reserve the enhancement line even during a swap so a held row stays under the mouse.
+    local enchantHeight = C_Item.GetWeaponEnchantInfo and item and (menu.accepts and 32 or 16) or 0
     local textWidth = count == 0 and menu.status:GetStringWidth() or menu.hintWidth
-    local width = math.max(8 + columns * 30, math.ceil(textWidth) + 16)
-    menu:SetSize(width, 24 + height)
+    local width = math.max(8 + columns * 30, math.ceil(textWidth) + 16, enchantHeight > 0 and 104 or 0)
+    menu:SetSize(width, 24 + height + enchantHeight)
     for index, row in ipairs(visible) do
         local column = (index - 1) % columns
         local line = math.floor((index - 1) / columns)
@@ -564,10 +694,11 @@ local function RefreshDrawer(menu)
     end
 end
 
-local function RefreshOpenDrawers()
+local function RefreshOpenDrawers(rebuild)
     if InCombatLockdown() then return end
-    if fishing.menu:IsShown() then RefreshDrawer(fishing.menu) end
-    if weaponDrawer:IsShown() then RefreshDrawer(weaponDrawer) end
+    local refresh = rebuild and RefreshDrawer or UpdateDrawerStatus
+    if fishing.menu:IsShown() then refresh(fishing.menu) end
+    if weaponDrawer:IsShown() then refresh(weaponDrawer) end
 end
 
 local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText)
@@ -589,7 +720,9 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText)
         menu.hintWidth = math.max(menu.hintWidth, menu.status:GetStringWidth())
     end
     menu.status:SetText("")
-    menu.rows = {}
+    menu.enchant = menu:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    menu.enchant:SetPoint("BOTTOM", 0, 20)
+    menu.rows, menu.visible = {}, {}
 
     local closeTimer
     local function CancelClose()
@@ -612,11 +745,15 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText)
         self.owner = owner
         RefreshDrawer(self)
         self:Show()
+        if C_Item.GetWeaponEnchantInfo and not self.ticker then
+            self.ticker = C_Timer.NewTicker(1, function() RefreshEnchant(self) end)
+        end
     end
     menu:SetScript("OnEnter", CancelClose)
     menu:SetScript("OnLeave", menu.ScheduleClose)
     menu:SetScript("OnHide", function(self)
         self.pressedRow = nil
+        if self.ticker then self.ticker:Cancel(); self.ticker = nil end
         CancelClose()
     end)
 
@@ -629,7 +766,16 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText)
         row.count = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         row.count:SetPoint("BOTTOMRIGHT", -1, 1)
         row:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
-        row:RegisterForClicks("LeftButtonUp")
+        if accepts then
+            row.star = row:CreateTexture(nil, "OVERLAY")
+            row.star:SetSize(12, 12)
+            row.star:SetPoint("TOPLEFT")
+            row.star:SetTexture("Interface\\COMMON\\FavoritesIcon")
+            row.star:Hide()
+            row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+        else
+            row:RegisterForClicks("LeftButtonUp")
+        end
         row:SetAttribute("useOnKeyDown", false)
         row:Hide()
 
@@ -649,21 +795,20 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText)
             if not item then return end
             menu.pressedRow = self
             pendingOffhand = nil
-            if EquippedID(slot) ~= item.id then
+            if not Equipped(item, slot) then
                 if NeedsMainForOffhand(item, slot) then EquipSet(menu.owner.choice)
-                else C_Item.EquipItemByName("item:" .. item.id, slot) end
+                else C_Item.EquipItemByName(ItemRef(item), slot) end
             end
-            RefreshDrawer(menu)
+            UpdateDrawerStatus(menu)
         end)
         row:SetScript("PreClick", function(self, button, down)
             if button ~= "LeftButton" or down or InCombatLockdown() then return end
             local item, slot = CurrentTarget()
             local ready = menu.pressedRow == self and item and item == menu.pressedItem
-                and slot == menu.pressedSlot and EquippedID(slot) == item.id
-            if ready then
-                self:SetAttribute("*macrotext1",
-                    ("/use [nocombat] item:%d\n/use [nocombat] %d"):format(entry.id, slot))
-            end
+                and slot == menu.pressedSlot and Equipped(item, slot)
+            -- SecureTemplates targets this slot only if the action opened an item-targeting cursor.
+            self:SetAttribute("*target-slot1", ready and slot or nil)
+            if ready then self:SetAttribute("*macrotext1", ("/use [nocombat] item:%d"):format(entry.id)) end
             self:SetAttribute("*type1", ready and "macro" or nil)
             menu.pressedRow = nil
         end)
@@ -672,6 +817,7 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText)
             if not db.showConsumableTooltips then return end
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
             GameTooltip:SetItemByID(entry.id)
+            if accepts then GameTooltip:AddLine("Right-click to star or unstar for this hand", 1, 0.82, 0) end
             if entry.bonus then GameTooltip:AddLine("+" .. entry.bonus .. " Fishing", 0.3, 1, 0.3) end
             GameTooltip:Show()
         end)
@@ -681,13 +827,25 @@ local function CreateItemDrawer(parent, entries, getTarget, accepts, emptyText)
             menu:ScheduleClose()
         end)
         row:HookScript("PostClick", function(self, button, down)
-            if button ~= "LeftButton" or down or InCombatLockdown() then return end
+            if down or InCombatLockdown() then return end
+            if button == "RightButton" and accepts and menu:IsShown() and row:IsShown() then
+                local _, slot = getTarget(menu)
+                if slot and slot == menu.targetSlot then
+                    if db.favorites[slot] == entry.id then db.favorites[slot] = nil
+                    else db.favorites[slot] = entry.id end
+                    menu.pressedRow = nil
+                    RefreshDrawer(menu)
+                end
+                return
+            end
+            if button ~= "LeftButton" then return end
+            self:SetAttribute("*target-slot1", nil)
             if self:GetAttribute("*type1") == "macro" then
                 self:SetAttribute("*type1", nil)
                 menu:Hide()
                 HideTooltip(self)
             elseif menu:IsShown() then
-                RefreshDrawer(menu)
+                UpdateDrawerStatus(menu)
             end
         end)
         menu.rows[#menu.rows + 1] = row
@@ -755,7 +913,7 @@ local function CreateFishing()
         end
     end)
     pole:SetScript("OnEnter", function(self)
-        if db.disableFishing or not db.showEquipmentTooltips then return end
+        if db.disableFishing or (db.fishingPole and not db.showEquipmentTooltips) then return end
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
         if db.fishingPole then
             GameTooltip:SetItemByID(db.fishingPole.id)
@@ -794,7 +952,17 @@ local function CreateFishing()
 end
 
 local function RegisterSettings()
-    settingsCategory = Settings.RegisterVerticalLayoutCategory("Forever Weapon Swap")
+    local layout
+    settingsCategory, layout = Settings.RegisterVerticalLayoutCategory("Forever Weapon Swap")
+    local binding = CreateSettingsListSectionHeaderInitializer("Cycle Weapon Sets",
+        "Assign this key in Options > Keybindings > Forever Weapon Swap.")
+    binding.customNameUpdateFunc = function()
+        local first, second = GetBindingKey("CLICK ForeverWeaponSwapToggle:LeftButton")
+        local text = first and GetBindingText(first) or "Unbound"
+        if second then text = text .. " / " .. GetBindingText(second) end
+        return "Cycle Weapon Sets — " .. text
+    end
+    layout:AddInitializer(binding)
     local function Register(key, label, kind, default, onChanged)
         return Settings.RegisterProxySetting(settingsCategory, "FWS_" .. key, kind, label, default,
             function() return db[key] end,
@@ -803,6 +971,8 @@ local function RegisterSettings()
                 if onChanged then onChanged() end
             end)
     end
+    local lock = Register("locked", "Lock bar position", Settings.VarType.Boolean, false)
+    Settings.CreateCheckbox(settingsCategory, lock, "Prevent dragging the WEAPONS header.")
     local size = Register("scale", "Size", Settings.VarType.Number, 1, ApplyAppearance)
     local sizeOptions = Settings.CreateSliderOptions(0.6, 2, 0.05)
     local opacity = Register("opacity", "Opacity", Settings.VarType.Number, 100, ApplyAppearance)
@@ -816,22 +986,25 @@ local function RegisterSettings()
         ApplyAppearance()
         SyncToggle()
     end)
-    Settings.CreateCheckbox(settingsCategory, disable, "Remove the fishing panel and skip the pole when cycling. The saved pole is kept.")
-    local hide = Register("hideFishingInCombat", "Hide fishing controls in combat", Settings.VarType.Boolean, true, ApplyAppearance)
-    Settings.CreateCheckbox(settingsCategory, hide, "Hide the fishing pole and lure arrow while in combat.")
+    local disableRow = Settings.CreateCheckbox(settingsCategory, disable, "Remove the fishing panel and skip the pole when cycling. The saved pole is kept.")
+    local hide = Register("hideFishingInCombat", "Hide fishing in combat", Settings.VarType.Boolean, true, ApplyAppearance)
+    local hideRow = Settings.CreateCheckbox(settingsCategory, hide, "Hide the fishing pole and lure arrow while in combat.")
     local equipmentTooltips = Register("showEquipmentTooltips", "Show equipment tooltips", Settings.VarType.Boolean, false)
     Settings.CreateCheckbox(settingsCategory, equipmentTooltips, "Show item tooltips for weapons, off-hands, and the fishing pole.")
     local consumableTooltips = Register("showConsumableTooltips", "Show consumable tooltips", Settings.VarType.Boolean, true)
     Settings.CreateCheckbox(settingsCategory, consumableTooltips, "Show item tooltips for weapon enhancements and fishing lures.")
     -- Keep the saved preference in the original form so it also works in older versions.
     local excludePole = Settings.RegisterProxySetting(settingsCategory, "FWS_excludeFishingFromCycle",
-        Settings.VarType.Boolean, "Exclude fishing pole from weapon cycle", false,
+        Settings.VarType.Boolean, "Skip pole when cycling", false,
         function() return not db.includeFishingInCycle end,
         function(exclude)
             db.includeFishingInCycle = not exclude
             SyncToggle()
         end)
-    Settings.CreateCheckbox(settingsCategory, excludePole, "Skip the fishing pole when cycling weapon sets. Click the pole to equip it directly.")
+    local cycleRow = Settings.CreateCheckbox(settingsCategory, excludePole, "Skip the fishing pole when cycling weapon sets. Click the pole to equip it directly.")
+    local function FishingEnabled() return not db.disableFishing end
+    hideRow:SetParentInitializer(disableRow, FishingEnabled)
+    cycleRow:SetParentInitializer(disableRow, FishingEnabled)
     Settings.RegisterAddOnCategory(settingsCategory)
 end
 
@@ -1013,7 +1186,7 @@ local function Command(text)
     if not bar then return end
     local cmd, value = text:lower():match("^%s*(%S*)%s*(.-)%s*$")
     if cmd == "help" or cmd == "" then
-        Message("Drop main-hands into 1/2 and optional off-hands below. /fws equip 1|2, toggle, save 1|2, macro 1|2, settings, lock, unlock, scale 0.6-2, reset, show, hide. Slash equipping is out of combat; use UI/keybind or copied native macros in combat.")
+        Message("Drop main-hands into 1/2 and optional off-hands below. /fws equip 1|2, toggle, save 1|2, exact 1|2, macro 1|2, settings, lock, unlock, scale 0.6-2, reset, show, hide. Shift-right-click to clear a saved slot (main hand clears the set). Slash equipping is out of combat; use UI/keybind or copied native macros in combat.")
         return
     end
     if cmd == "1" or cmd == "2" or cmd == "equip" then
@@ -1029,11 +1202,11 @@ local function Command(text)
     end
     if cmd == "settings" then Settings.OpenToCategory(settingsCategory:GetID()); return end
     if InCombatLockdown() then Message("Change settings after combat."); return end
-    if cmd == "save" or cmd == "macro" then
+    if cmd == "save" or cmd == "exact" or cmd == "macro" then
         local index = tonumber(value)
         if index ~= 1 and index ~= 2 then Message("Specify set 1 or 2."); return end
         if cmd == "macro" then ShowMacro(index)
-        else SaveEquipped(index) end
+        else SaveEquipped(index, cmd == "exact") end
         return
     end
     if cmd == "lock" or cmd == "unlock" then
@@ -1078,21 +1251,62 @@ local function InitializeUI()
     Message("Ready. /fws help for setup and keybind instructions.")
 end
 
+local function ValidID(id)
+    return type(id) == "number" and id > 0 and id <= 2147483647 and id == math.floor(id)
+end
+
+local function CheckedItem(item)
+    if type(item) ~= "table" or not ValidID(item.id) then return end
+    if type(item.link) ~= "string" then item.link = nil end
+    if item.payload ~= nil then
+        if item.payload ~= ItemPayload(item.payload) or type(item.payload) ~= "string"
+            or tonumber(item.payload:match("^item:(%d+)")) ~= item.id then return end
+        item.variant = VariantKey(item.payload)
+    else
+        item.variant = nil
+    end
+    return item
+end
+
+local function LoadSettings()
+    if type(ForeverWeaponSwapDB) ~= "table" then ForeverWeaponSwapDB = {} end
+    db = ForeverWeaponSwapDB
+    if type(db.weapons) ~= "table" then db.weapons = {} end
+    for i = 1, 2 do
+        local set = CheckedItem(db.weapons[i])
+        if set then
+            set.offhand = CheckedItem(set.offhand)
+            if set.offhand and set.offhand.id == set.id and
+                (not set.variant or not set.offhand.variant or set.variant == set.offhand.variant) then
+                set.offhand = nil
+            end
+        end
+        db.weapons[i] = set
+    end
+    db.fishingPole = CheckedItem(db.fishingPole)
+    if type(db.favorites) ~= "table" then db.favorites = {} end
+    for hand = MAIN_HAND, OFF_HAND do
+        if not ValidID(db.favorites[hand]) then db.favorites[hand] = nil end
+    end
+    local anchors = { TOPLEFT=true, TOP=true, TOPRIGHT=true, LEFT=true, CENTER=true, RIGHT=true,
+        BOTTOMLEFT=true, BOTTOM=true, BOTTOMRIGHT=true }
+    local function Finite(n) return type(n) == "number" and n == n and math.abs(n) < math.huge end
+    local pos = db.position
+    if type(pos) ~= "table" or not anchors[pos.point] or not anchors[pos.relativePoint]
+        or not Finite(pos.x) or not Finite(pos.y) then db.position = nil end
+    db.scale = math.max(0.6, math.min(2, tonumber(db.scale) or 1))
+    db.opacity = math.max(20, math.min(100, tonumber(db.opacity) or 100))
+    for key, default in pairs({ hideFishingInCombat=true, disableFishing=false, includeFishingInCycle=true,
+        showEquipmentTooltips=false, showConsumableTooltips=true, locked=false, hidden=false }) do
+        if type(db[key]) ~= "boolean" then db[key] = default end
+    end
+end
+
 events:RegisterEvent("ADDON_LOADED")
 events:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" then
         if arg1 ~= ADDON then return end
-        ForeverWeaponSwapDB = ForeverWeaponSwapDB or {}
-        db = ForeverWeaponSwapDB
-        db.weapons = db.weapons or {}
-        db.scale = tonumber(db.scale) or 1
-        db.scale = math.max(0.6, math.min(2, db.scale))
-        db.opacity = math.max(20, math.min(100, tonumber(db.opacity) or 100))
-        if db.hideFishingInCombat == nil then db.hideFishingInCombat = true end
-        if db.disableFishing == nil then db.disableFishing = false end
-        if db.includeFishingInCycle == nil then db.includeFishingInCycle = true end
-        if db.showEquipmentTooltips == nil then db.showEquipmentTooltips = false end
-        if db.showConsumableTooltips == nil then db.showConsumableTooltips = true end
+        LoadSettings()
         events:UnregisterEvent("ADDON_LOADED")
         events:RegisterEvent("PLAYER_REGEN_ENABLED")
         if not InCombatLockdown() then InitializeUI() end
@@ -1109,31 +1323,35 @@ events:SetScript("OnEvent", function(_, event, arg1)
         UpdateGlobalCooldown()
     elseif event == "GET_ITEM_INFO_RECEIVED" then
         if arg1 == CursorItemID() then UpdateOffhandVisibility() end
-        local changed
+        local changed, variantChanged
         local function UpdateLink(item)
             if item and item.id == arg1 then
                 if not item.link then
                     local _, link = C_Item.GetItemInfo(arg1)
                     item.link = link
                 end
+                if item.payload then variantChanged = true end
                 changed = true
             end
         end
         UpdateLink(db.fishingPole)
         for _, button in ipairs(weaponButtons) do UpdateLink(Weapon(button.choice, button.isOffhand)) end
+        if variantChanged then bagVariants = nil end
         if changed then UpdateVisuals() end
+        if variantChanged then SyncToggle() end
     elseif event == "BAG_UPDATE_DELAYED" then
-        bagItems = nil
+        bagItems, bagVariants = nil, nil
         UpdateVisuals()
         SyncToggle()
-        RefreshOpenDrawers()
+        RefreshOpenDrawers(true)
     elseif event == "PLAYER_REGEN_ENABLED" then
         FinishMoving()
         ApplyAppearance()
         UpdateVisuals()
         SyncToggle()
     elseif event ~= "PLAYER_EQUIPMENT_CHANGED" or arg1 == MAIN_HAND or arg1 == OFF_HAND then
-        bagItems = nil
+        if event == "PLAYER_ENTERING_WORLD" then gcdSpell = nil end
+        bagItems, bagVariants = nil, nil
         if event == "PLAYER_EQUIPMENT_CHANGED" then FinishOffhandSwap() end
         RefreshOpenDrawers()
         UpdateVisuals()

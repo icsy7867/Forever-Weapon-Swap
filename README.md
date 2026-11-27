@@ -1,4 +1,4 @@
-# Forever Weapon Swap 1.8.3
+# Forever Weapon Swap 1.9.0-dev
 
 Two compact main-hand/off-hand sets for World of Warcraft: Forever (Interface 16001). No dependencies. Existing 1.0 main-hand choices and position settings are retained.
 
@@ -11,7 +11,7 @@ Exit the game, replace the `ForeverWeaponSwap` folder in `World of Warcraft/_for
 1. In WoW, open **Options → Keybindings → Forever Weapon Swap**.
 2. Assign a key to **Cycle Weapon Sets**. Press it to swap between your saved sets.
 
-Outside combat, the default order is **Set 1 → Set 2 → Fishing Pole**. The key skips empty sets and any pole that's unavailable or excluded in Settings. In combat, it cycles only through weapon sets.
+Outside combat, the default order is **Set 1 → Set 2 → Fishing Pole**. The key skips empty or incomplete sets, sets whose managed slots already match, and any pole that's missing or excluded in Settings. In combat, it cycles only through weapon sets.
 
 You can also bind **Equip Weapon Set 1** and **Equip Weapon Set 2** to select a set directly. All three bindings start unassigned on a fresh install. Existing bindings carry over when you update. Fully restart WoW after updating so it reloads the bindings.
 
@@ -36,6 +36,8 @@ Weapon sets, the saved pole, position, visibility, size, opacity, and lock state
 
 - Outside combat, hover a saved weapon to see compatible enhancements from your bags. The main-hand drawer opens above its icon and the off-hand drawer opens below. Hover an enhancement for its in-game tooltip. Press its icon to equip the saved weapon. Release on the same icon to apply the enhancement to that hand.
 - The drawer supports 42 consumables, including standard and special sharpening stones, weightstones, wizard and mana oils, Frost and Shadow Oil, and rogue poison ranks. Standard stones filter by weapon subclass. Poisons appear for rogues. WoW checks any additional requirements when you apply an item.
+- Right-click an enhancement to star it for that hand. Your main-hand and off-hand favorites are saved separately per character. An available favorite appears first and carries a star. Right-click it again to remove the star.
+- When the saved weapon is equipped, its drawer shows the active temporary enhancement and imbue by icon, time remaining, and available charges. The lure drawer shows the same information for the equipped pole.
 - A quick click works when the swap finishes before release. For a slower swap, hold until the drawer says **Release to apply**. If you release early, click the same consumable again once the drawer says **Click to apply**. WoW handles any confirmation to replace an existing enhancement.
 - An off-hand enhancement normally swaps just the off-hand. If the main hand is empty, holds a two-hander such as a fishing pole, or holds the weapon you want in your off-hand, the addon requests the saved pair first. Missing items and locked hands dim the consumables. Shields, held off-hand items, and empty slots have no drawer. Permanent enchants and ranged scopes are outside this feature.
 
@@ -50,11 +52,12 @@ Weapon sets, the saved pole, position, visibility, size, opacity, and lock state
 
 Open **Options → AddOns → Forever Weapon Swap**, or type `/fws settings`. **Size** ranges from 60% to 200%, and **Opacity** ranges from 20% to 100%.
 
-- **Show equipment tooltips** defaults to off and covers main-hand weapons, off-hands, and the fishing pole.
+- The settings header shows your **Cycle Weapon Sets** key or **Unbound**. **Lock bar position** locks the WEAPONS drag handle.
+- **Show equipment tooltips** defaults to off and covers main-hand weapons, off-hands, and the fishing pole. Empty slots still give brief setup instructions.
 - **Show consumable tooltips** defaults to on and covers both weapon enhancements and fishing lures. Both drawers open on hover with either tooltip setting.
-- **Disable fishing** defaults to off. Check it to show just the two weapon sets and disable the fishing pole slot, lure drawer, and pole selection through the keybind or `/fws toggle`. The saved pole and fishing preferences return when you uncheck it. If changed during combat, the layout updates when combat ends. Use a weapon set to swap away from an already equipped pole.
-- **Exclude fishing pole from weapon cycle** defaults to off. Check it to skip the pole in the cycle and equip the pole by clicking it directly. The checkbox reflects each character's saved cycle preference from earlier versions.
-- **Hide fishing controls in combat** defaults to on. Uncheck it to keep the controls visible during combat. Pole setup and lure application are available outside combat.
+- **Disable fishing** defaults to off. Check it to show just the two weapon sets and disable the fishing pole slot, lure drawer, and pole selection through the keybind or `/fws toggle`. The two dependent fishing options gray out while fishing is disabled. Your saved pole and preferences return when you uncheck it. If changed during combat, the layout updates when combat ends. Use a weapon set to swap away from an already equipped pole.
+- **Skip pole when cycling** defaults to off. Check it to skip the pole in the cycle and equip the pole by clicking it directly. The checkbox reflects each character's saved cycle preference from earlier versions.
+- **Hide fishing in combat** defaults to on. Uncheck it to keep the controls visible during combat. Pole setup and lure application are available outside combat.
 
 ## Slash commands
 
@@ -65,6 +68,7 @@ Open **Options → AddOns → Forever Weapon Swap**, or type `/fws settings`. **
 | `/fws toggle` | Equip the next configured option outside combat |
 | `/fws settings` | Open the addon settings |
 | `/fws save 1` or `/fws save 2` | Capture the equipped main-hand and optional off-hand |
+| `/fws exact 1` or `/fws exact 2` | Save equipped variants by item link (experimental) |
 | `/fws macro 1` or `/fws macro 2` | Open copyable native macro text for that set |
 | `/fws lock` / `/fws unlock` | Lock/unlock the position |
 | `/fws scale 1.25` | Resize the bar; range 0.6–2 |
@@ -108,13 +112,13 @@ During combat the toggle alternates **requested sets**. If a swap fails or anoth
 
 Slash equipping checks both saved items are carried before making a request. Game restrictions can still cause a partial equip, so it does not claim success before equipment events confirm the pair.
 
-Items are stored by item ID. Differently enchanted copies of the same ID cannot be distinguished, and the same ID cannot occupy both hands in one saved set. The addon does not manage ranged weapons, armor, or a deliberately empty off-hand.
+Normal saves use item IDs. For two copies of the same base weapon with different permanent enchants or random suffixes, equip the pair and use **`/fws exact 1`** or **`/fws exact 2`**. This experimental mode uses the equipped item payloads for direct buttons, keybinds, slash equips and macro export. Bag availability, highlights, and the consumable release check compare the saved variants. Re-save after changing a permanent enchant. Identical variants, including copies differing only in temporary poison, cannot be distinguished reliably and are rejected as a pair. Normal drag-and-drop and right-click assignments still save by ID. The addon does not manage ranged weapons, armor, or a deliberately empty off-hand.
 
 ## Verification
 
 Automated checks passed in a mock WoW API/frame environment using Lua 5.4. Checks cover the original behavior plus paired sets, shields, held off-hands, dual-wield configurations, partial-set highlighting, optional off-hand behavior, two-handed transitions, command parsing, slash combat guards, native macro export, missing items, and secure toggle target selection.
 
-Run `python3 tests/run.py` from the extracted addon on Linux with `liblua5.4.so.0` installed. The mock suite covers the lure drawer, item placement, delayed off-hand swaps, and recovery when a load or drag overlaps combat. The mock suite also exercises consumable presses and releases with immediate, delayed, and interrupted swaps. Version 1.8.2 still needs a live WoW Forever check for input timing, protected actions, and enchant replacement prompts. `/console scriptErrors 1` enables Lua error popups.
+Run `python3 tests/run.py` from the extracted addon on Linux with `liblua5.4.so.0` installed. The mock suite covers the lure drawer, item placement, delayed off-hand swaps, and recovery when a load or drag overlaps combat. The mock suite also exercises consumable presses and releases with immediate, delayed, and interrupted swaps. The dev suite also covers missing or overlapping cycle choices, rejected off-hand equips, favorites, both enchant types, saved-data recovery, restricted values and same-ID variant targeting. Live verification is still needed for native item-link resolution, enchant replacement prompts and secure press/release timing. For exact sets, swap two differently enchanted copies away and back via both the cycle key and a direct button, then apply a different poison to each hand. On a weapon with an on-use effect, try a consumable the game rejects and confirm the weapon's own cooldown stays ready. `/console scriptErrors 1` enables Lua error popups.
 
 ## Consumable data
 
@@ -138,6 +142,10 @@ The item list is in `Consumables.lua`. Each entry uses the bag item ID. Ordinary
 Implementation is original; references were used to verify API patterns and restrictions.
 
 ## Changelog
+
+- **1.9.0-dev** — Out-of-combat cycling skips missing and already-matching sets. Paired slash swaps confirm the off-hand and report which part timed out.
+- **1.9.0-dev** — Added per-hand enhancement favorites, active enhancement and lure timers and charges, and conditional native item targeting. Drawer lock updates reuse the visible list and counts.
+- **1.9.0-dev** — Added experimental equipped-variant capture (`/fws exact 1|2`), per-entry saved-data recovery, current key and lock in Settings, shorter fishing options, and setup hints for empty slots.
 
 - **1.8.3** — Added an opt-in **Disable fishing** setting that removes the fishing panel and lure drawer and limits the addon’s swap cycle to the two weapon sets.
 - **1.8.2** — Added separate tooltip settings for equipment and consumables. Equipment tooltips default to off, and consumable tooltips default to on. Added an **Exclude fishing pole from weapon cycle** checkbox that preserves the previous preference. Made both consumable drawers fit their icons and status messages. Moved the swap keybinding instructions to the top of the README.
