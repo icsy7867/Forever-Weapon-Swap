@@ -141,7 +141,16 @@ The item list is in `Consumables.lua`. Each entry uses the bag item ID. Ordinary
 
 Implementation is original; references were used to verify API patterns and restrictions.
 
+## Optional third set and consumable warnings
+
+Enable **Enable third set** in settings to add Set 3 to the bar, cycle, direct bindings and slash commands. Disabling it preserves its gear. Two sets are enabled by default.
+
+The optional translucent consumable dial displays the soonest-expiring active effect on each matching equipped hand or pole. Green changes to orange at 30% and red at 15%. Both thresholds are adjustable. Forever supplies remaining time, so percentages use the longest duration observed for that enchant on this character. A first observation halfway through an effect can overestimate the percentage until a fresh application is observed. The independent low-charge warning gently pulses the active consumable icon in the weapon drawer at five or fewer positive charges reported by the client.
+
 ## Changelog
+
+- **1.9.0** — Added an optional third weapon set, configurable consumable countdown dials and a low-charge drawer warning.
+
 
 - **1.9.0** — Documented the contributor update workflow and CurseForge changelog format.
 

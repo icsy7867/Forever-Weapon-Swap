@@ -13,6 +13,8 @@ Forever Weapon Swap saves two weapon sets and an optional fishing pole per chara
 | Which items can be applied? | [Consumables.lua](Consumables.lua) holds bag item IDs, lure bonuses and target compatibility rules. |
 | How do I check a change outside the game? | Run `python3 tests/run.py`. [The mock suite](tests/test.lua) exercises the Lua logic. Live Forever checks cover protected actions, native macro resolution, input timing and UI layout. |
 
+The optional third set uses choice 3. The fishing pole has internal cycle index 4. Dial percentages use the longest observed lifetime for each enchant ID. Charge warnings refer to charges on the equipped enhancement, separate from the number of consumables in bags.
+
 ## Gear and player-facing terms
 
 | Term | Meaning in this addon |

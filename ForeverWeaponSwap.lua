@@ -2,7 +2,7 @@ local ADDON, addon = ...
 BINDING_HEADER_FOREVERWEAPONSWAP = "Forever Weapon Swap"
 _G["BINDING_NAME_CLICK ForeverWeaponSwapToggle:LeftButton"] = "Cycle Weapon Sets"
 
-for index = 1, 2 do
+for index = 1, 3 do
     _G["BINDING_NAME_CLICK ForeverWeaponSwapChoice" .. index .. ":LeftButton"] = "Equip Weapon Set " .. index
 end
 
@@ -25,7 +25,10 @@ local WEAPON_PANEL_WIDTH = 92
 local FISHING_PANEL_WIDTH = 72
 local PANEL_GAP = 3
 local offhandLocations = { INVTYPE_WEAPON = true, INVTYPE_WEAPONOFFHAND = true, INVTYPE_SHIELD = true, INVTYPE_HOLDABLE = true }
+local function SetCount() return db.thirdSet and 3 or 2 end
+
 local function Weapon(index, offhand)
+    if index > SetCount() then return end
     local set = db.weapons[index]
     if offhand then return set and set.offhand end
     return set
@@ -56,8 +59,9 @@ local function UpdateOffhandVisibility()
         eligible = offhandLocations[location] and (class == 2 or class == 4)
     end
     local expanded = false
-    for index = 1, 2 do
+    for index = 1, 3 do
         local main = Weapon(index, false)
+        if index == 3 then buttons[index]:SetShown(db.thirdSet) end
         local show = main and main.offhand ~= nil
         if not show and eligible and main and main.id ~= id then
             local _, _, _, location = C_Item.GetItemInfoInstant(main.id)
@@ -111,6 +115,7 @@ local function IsFishingPole(id)
 end
 
 local function IsWeaponSet(index)
+    if index > SetCount() then return false end
     local set = db.weapons[index]
     return set and set.id and not IsFishingPole(set.id)
         and not (set.offhand and IsFishingPole(set.offhand.id))
@@ -118,7 +123,7 @@ end
 
 local function EquippedChoice()
     local fallback
-    for i = 1, 2 do
+    for i = 1, SetCount() do
         local set = db.weapons[i]
         if set and Equipped(set, MAIN_HAND) then
             if set.offhand and Equipped(set.offhand, OFF_HAND) then return i end
@@ -225,11 +230,11 @@ end
 local function NextOutOfCombat()
     local pole = not db.disableFishing and db.fishingPole
     local current = EquippedChoice() or 0
-    if pole and EquippedID() == pole.id then current = 3 end
-    for step = 1, 3 do
-        local index = (current + step - 1) % 3 + 1
-        if index == 3 then
-            if db.includeFishingInCycle and current ~= 3 and pole and Carried(pole) then
+    if pole and EquippedID() == pole.id then current = 4 end
+    for step = 1, 4 do
+        local index = (current + step - 1) % 4 + 1
+        if index == 4 then
+            if db.includeFishingInCycle and current ~= 4 and pole and Carried(pole) then
                 return index, "/equipslot [nocombat] 16 item:" .. pole.id
             end
         elseif IsWeaponSet(index) then
@@ -244,7 +249,7 @@ end
 
 local function SyncToggle()
     if InCombatLockdown() then return end
-    controller:SetAttribute("next", EquippedChoice() == 1 and 2 or 1)
+    controller:SetAttribute("next", (EquippedChoice() or 0) % SetCount() + 1)
     local _, macro = NextOutOfCombat()
     controller:SetAttribute("peacefulMacro", macro)
 end
@@ -252,7 +257,8 @@ end
 -- Rebuild only outside combat. Secure handlers own the alternating target in combat.
 local function ConfigureActions()
     if not db or not controller or InCombatLockdown() then return end
-    for i = 1, 2 do
+    controller:SetAttribute("count", SetCount())
+    for i = 1, 3 do
         local macro = MacroText(i)
         controller:SetAttribute("weapon" .. i, macro)
         buttons[i]:SetAttribute("*type1", macro and "macro" or nil)
@@ -419,7 +425,10 @@ local function ApplyAppearance()
     if InCombatLockdown() then return end
     bar:SetScale(db.scale)
     bar:SetAlpha(db.opacity / 100)
-    local width = WEAPON_PANEL_WIDTH
+    local width = WEAPON_PANEL_WIDTH + (SetCount() - 2) * 42
+    bar.weaponBackdrop:SetWidth(width)
+    fishing:ClearAllPoints()
+    fishing:SetPoint("TOPLEFT", bar, "TOPLEFT", width + PANEL_GAP, 0)
     local rule = "hide"
     if not db.disableFishing then
         width = width + PANEL_GAP + FISHING_PANEL_WIDTH
@@ -594,9 +603,13 @@ local function ConsumableCount(id)
     if Public(count) and count and count > 0 then return count end
 end
 
-local function EnchantText(enchant)
+local function EnchantText(enchant, warn)
     local icon, time, charges = enchant.enchantIconID, enchant.timeLeft, enchant.charges
     local text = Public(icon) and type(icon) == "number" and ("|T%d:14|t"):format(icon) or "Active"
+    if warn and db.chargePulse and Public(icon) and type(icon) == "number" and Public(charges)
+        and type(charges) == "number" and charges > 0 and charges <= 5 and math.floor(GetTime()) % 2 == 1 then
+        text = ("|T%d:16|t"):format(icon)
+    end
     if Public(time) and type(time) == "number" and time > 0 then
         local seconds = math.ceil(time / 1000)
         text = text .. (seconds >= 60 and (" %dm"):format(math.ceil(seconds / 60)) or (" %ds"):format(seconds))
@@ -620,8 +633,8 @@ local function RefreshEnchant(menu)
                 if not Public(enchant) or not Public(enchant.hasEnchant) or not Public(enchant.enchantType) then
                     unknown = true
                 elseif enchant.hasEnchant then
-                    if enchant.enchantType == Enum.ItemEnchantType.Temporary then temporary = EnchantText(enchant)
-                    elseif enchant.enchantType == Enum.ItemEnchantType.Imbue then imbue = EnchantText(enchant) end
+                    if enchant.enchantType == Enum.ItemEnchantType.Temporary then temporary = EnchantText(enchant, menu.accepts)
+                    elseif enchant.enchantType == Enum.ItemEnchantType.Imbue then imbue = EnchantText(enchant, menu.accepts) end
                 end
             end
             if temporary and imbue then text = temporary .. "\n" .. imbue
@@ -970,6 +983,22 @@ local function RegisterSettings()
                 if onChanged then onChanged() end
             end)
     end
+    local third = Register("thirdSet", "Enable third set", Settings.VarType.Boolean, false, function()
+        if not InCombatLockdown() then ConfigureActions(); ApplyAppearance(); UpdateVisuals() end
+    end)
+    Settings.CreateCheckbox(settingsCategory, third, "Add a third weapon set. Combat layout changes take effect after combat.")
+    Settings.CreateCheckbox(settingsCategory, Register("enchantDial", "Consumable timer dial", Settings.VarType.Boolean, true), "Show remaining enhancement time on equipped items.")
+    Settings.CreateCheckbox(settingsCategory, Register("chargePulse", "Low-charge pulse", Settings.VarType.Boolean, true), "Pulse the active consumable icon at five or fewer reported charges.")
+    local function Threshold(key, name, default)
+        local setting = Register(key, name, Settings.VarType.Number, default, function()
+            db.red = math.min(db.red, db.orange - 1)
+        end)
+        local options = Settings.CreateSliderOptions(key == "orange" and 2 or 1, key == "orange" and 99 or 98, 1)
+        options:SetLabelFormatter(MinimalSliderWithSteppersMixin.Label.Right, function(v) return v .. "%" end)
+        Settings.CreateSlider(settingsCategory, setting, options, "Red must be below orange.")
+    end
+    Threshold("orange", "Orange time remaining", 30)
+    Threshold("red", "Red time remaining", 15)
     local lock = Register("locked", "Lock bar position", Settings.VarType.Boolean, false)
     Settings.CreateCheckbox(settingsCategory, lock, "Prevent dragging the WEAPONS header.")
     local size = Register("scale", "Size", Settings.VarType.Number, 1, ApplyAppearance)
@@ -1018,6 +1047,64 @@ local function FinishMoving()
     db.position = { point = point, relativePoint = relativePoint, x = x, y = y }
 end
 
+-- Forever supplies remaining milliseconds. Remember the longest observation per effect.
+local function ReadDial(slot)
+    local hand = slot == OFF_HAND and Enum.WeaponSlot.OffHand or Enum.WeaponSlot.MainHand
+    local records = C_Item.GetWeaponEnchantInfo(hand)
+    if not Public(records) or type(records) ~= "table" then return end
+    local shortest, total
+    for _, e in pairs(records) do
+        if Public(e) and Public(e.hasEnchant) and e.hasEnchant and Public(e.enchantType)
+            and (e.enchantType == Enum.ItemEnchantType.Temporary or e.enchantType == Enum.ItemEnchantType.Imbue)
+            and Public(e.timeLeft) and type(e.timeLeft) == "number" and e.timeLeft > 0
+            and Public(e.enchantID) and type(e.enchantID) == "number" then
+            local seconds = e.timeLeft / 1000
+            local prior = tonumber(db.enchantDurations[e.enchantID]) or 0
+            local duration = math.max(seconds, prior)
+            if duration ~= prior then db.enchantDurations[e.enchantID] = duration end
+            if not shortest or seconds < shortest then shortest, total = seconds, duration end
+        end
+    end
+    return shortest, total
+end
+
+local function UpdateDials()
+    local hands = {}
+    if db.enchantDial and C_Item.GetWeaponEnchantInfo then
+        for slot = MAIN_HAND, OFF_HAND do hands[slot] = { ReadDial(slot) } end
+    end
+    local function Draw(button, item, slot)
+        local dial = button.enchantDial
+        local timing = hands[slot]
+        if not item or not timing or not timing[1] or not Equipped(item, slot) then
+            if dial then dial:Hide() end
+            return
+        end
+        if not dial then
+            dial = CreateFrame("Cooldown", nil, bar, "CooldownFrameTemplate")
+            dial:SetAllPoints(button.icon)
+            dial:SetFrameLevel(button:GetFrameLevel() + 1)
+            dial:EnableMouse(false)
+            dial:SetDrawEdge(false)
+            dial:SetDrawBling(false)
+            dial:SetHideCountdownNumbers(true)
+            dial:SetSwipeTexture("Interface\\\\CHARACTERFRAME\\\\TempPortraitAlphaMask")
+            button.enchantDial = dial
+        end
+        local remaining, duration = timing[1], timing[2]
+        local percent = remaining * 100 / duration
+        if percent <= db.red then dial:SetSwipeColor(1, 0.12, 0.1, 0.42)
+        elseif percent <= db.orange then dial:SetSwipeColor(1, 0.52, 0.03, 0.38)
+        else dial:SetSwipeColor(0.1, 0.9, 0.35, 0.32) end
+        dial:SetCooldown(GetTime() + remaining - duration, duration)
+        dial:Show()
+    end
+    for _, button in ipairs(weaponButtons) do
+        Draw(button, Weapon(button.choice, button.isOffhand), button.isOffhand and OFF_HAND or MAIN_HAND)
+    end
+    Draw(fishing.pole, fishing:IsVisible() and db.fishingPole, MAIN_HAND)
+end
+
 local function CreateUI()
     controller = CreateFrame("Frame", "ForeverWeaponSwapController", UIParent, "SecureHandlerBaseTemplate")
     bar = CreateFrame("Frame", "ForeverWeaponSwapBar", UIParent)
@@ -1030,6 +1117,7 @@ local function CreateUI()
     local weaponBackdrop = CreateFrame("Frame", nil, bar, "BackdropTemplate")
     weaponBackdrop:SetPoint("TOPLEFT", 0, 0)
     weaponBackdrop:SetPoint("BOTTOMLEFT", 0, 0)
+    bar.weaponBackdrop = weaponBackdrop
     weaponBackdrop:SetWidth(WEAPON_PANEL_WIDTH)
     weaponBackdrop:SetFrameLevel(bar:GetFrameLevel())
     SetPanelBackdrop(weaponBackdrop)
@@ -1068,17 +1156,18 @@ local function CreateUI()
         end
         local target = control:GetAttribute("next") or 1
         local macro = control:GetAttribute("weapon" .. target)
-        if not macro then
-            target = 3 - target
+        for i = 2, control:GetAttribute("count") do
+            if macro then break end
+            target = target % control:GetAttribute("count") + 1
             macro = control:GetAttribute("weapon" .. target)
         end
         self:SetAttribute("*macrotext1", macro)
-        if macro then control:SetAttribute("next", 3 - target) end
+        if macro then control:SetAttribute("next", target % control:GetAttribute("count") + 1) end
     ]])
 
-    for n = 1, 4 do
-        local i = n <= 2 and n or n - 2
-        local offhand = n > 2
+    for n = 1, 6 do
+        local i = n <= 3 and n or n - 3
+        local offhand = n > 3
         local button = CreateFrame("Button", "ForeverWeaponSwap" .. (offhand and "Offhand" or "Choice") .. i, bar, "SecureActionButtonTemplate")
         if offhand then buttons[i].offhandButton = button else buttons[i] = button end
         weaponButtons[#weaponButtons + 1] = button
@@ -1123,7 +1212,7 @@ local function CreateUI()
             if SecureCmdOptionParse("[nocombat] yes") and self:GetAttribute("fwsDrop") then return false end
             local target = self:GetAttribute("choice")
             if self:GetAttribute("*type1") == "macro" then
-                control:SetAttribute("next", 3 - target)
+                control:SetAttribute("next", target % control:GetAttribute("count") + 1)
             end
         ]])
         button:HookScript("PostClick", function(self, mouseButton, down)
@@ -1151,6 +1240,14 @@ local function CreateUI()
         "No compatible items in bags")
     bar.weaponDrawer = weaponDrawer
     CreateFishing()
+    local elapsedSinceDialUpdate = 1
+    bar:SetScript("OnUpdate", function(_, elapsed)
+        elapsedSinceDialUpdate = elapsedSinceDialUpdate + elapsed
+        if elapsedSinceDialUpdate >= 1 then
+            elapsedSinceDialUpdate = 0
+            UpdateDials()
+        end
+    end)
     ConfigureActions()
     UpdateVisuals()
 end
@@ -1191,14 +1288,14 @@ local function Command(text)
         Message("Drop main-hands into 1/2 and optional off-hands below. /fws equip 1|2, toggle, save 1|2, exact 1|2, macro 1|2, settings, lock, unlock, scale 0.6-2, reset, show, hide. Shift-right-click to clear a saved slot (main hand clears the set). Slash equipping is out of combat; use UI/keybind or copied native macros in combat.")
         return
     end
-    if cmd == "1" or cmd == "2" or cmd == "equip" then
+    if cmd == "1" or cmd == "2" or cmd == "3" or cmd == "equip" then
         local index = tonumber(cmd == "equip" and value or cmd)
-        if index ~= 1 and index ~= 2 then Message("Use /fws equip 1 or /fws equip 2."); return end
+        if index ~= 1 and index ~= 2 and not (index == 3 and db.thirdSet) then Message("Specify an enabled set number."); return end
         EquipSet(index); return
     elseif cmd == "toggle" then
         if InCombatLockdown() then Message("Use the weapon cycle key in combat."); return end
         local index = NextOutOfCombat()
-        if index == 3 then EquipPole()
+        if index == 4 then EquipPole()
         elseif index then EquipSet(index) end
         return
     end
@@ -1206,7 +1303,7 @@ local function Command(text)
     if InCombatLockdown() then Message("Change settings after combat."); return end
     if cmd == "save" or cmd == "exact" or cmd == "macro" then
         local index = tonumber(value)
-        if index ~= 1 and index ~= 2 then Message("Specify set 1 or 2."); return end
+        if index ~= 1 and index ~= 2 and not (index == 3 and db.thirdSet) then Message("Specify an enabled set number."); return end
         if cmd == "macro" then ShowMacro(index)
         else SaveEquipped(index, cmd == "exact") end
         return
@@ -1274,7 +1371,7 @@ local function LoadSettings()
     if type(ForeverWeaponSwapDB) ~= "table" then ForeverWeaponSwapDB = {} end
     db = ForeverWeaponSwapDB
     if type(db.weapons) ~= "table" then db.weapons = {} end
-    for i = 1, 2 do
+    for i = 1, 3 do
         local set = CheckedItem(db.weapons[i])
         if set then
             set.offhand = CheckedItem(set.offhand)
@@ -1286,6 +1383,7 @@ local function LoadSettings()
         db.weapons[i] = set
     end
     db.fishingPole = CheckedItem(db.fishingPole)
+    if type(db.enchantDurations) ~= "table" then db.enchantDurations = {} end
     if type(db.favorites) ~= "table" then db.favorites = {} end
     for hand = MAIN_HAND, OFF_HAND do
         if not ValidID(db.favorites[hand]) then db.favorites[hand] = nil end
@@ -1296,10 +1394,12 @@ local function LoadSettings()
     local pos = db.position
     if type(pos) ~= "table" or not anchors[pos.point] or not anchors[pos.relativePoint]
         or not Finite(pos.x) or not Finite(pos.y) then db.position = nil end
+    db.orange = math.max(2, math.min(99, tonumber(db.orange) or 30))
+    db.red = math.max(1, math.min(db.orange - 1, tonumber(db.red) or 15))
     db.scale = math.max(0.6, math.min(2, tonumber(db.scale) or 1))
     db.opacity = math.max(20, math.min(100, tonumber(db.opacity) or 100))
     for key, default in pairs({ hideFishingInCombat=true, disableFishing=false, includeFishingInCycle=true,
-        showEquipmentTooltips=false, showConsumableTooltips=true, locked=false, hidden=false }) do
+        thirdSet=false, enchantDial=true, chargePulse=true, showEquipmentTooltips=false, showConsumableTooltips=true, locked=false, hidden=false }) do
         if type(db[key]) ~= "boolean" then db[key] = default end
     end
 end
@@ -1347,6 +1447,7 @@ events:SetScript("OnEvent", function(_, event, arg1)
         SyncToggle()
         RefreshOpenDrawers(true)
     elseif event == "PLAYER_REGEN_ENABLED" then
+        ConfigureActions()
         FinishMoving()
         ApplyAppearance()
         UpdateVisuals()

@@ -68,6 +68,7 @@ function CreateFrame(frameType,name,parent,template)
  if name then _G[name]=f end
  return f
 end
+function GetTime() return 100 end
 function InCombatLockdown() return combat end
 function SecureCmdOptionParse(options)
     assert(options == '[nocombat] yes')
@@ -976,3 +977,30 @@ assert(devDB.showEquipmentTooltips==false)
 ForeverWeaponSwapChoice2.scripts.OnEnter(ForeverWeaponSwapChoice2)
 assert(GameTooltip:IsOwned(ForeverWeaponSwapChoice2) and GameTooltip.shown)
 io.write("PASS: damaged saved data recovers per entry and empty slots offer setup help\n")
+
+-- Check set 3 through its public commands and settings, then drive the icon timer.
+local third = settings.FWS_thirdSet
+assert(not third.get() and not ForeverWeaponSwapChoice3.shown)
+third.set(true)
+equipped, equippedOff = 300, nil
+SlashCmdList.FOREVERWEAPONSWAP("save 3")
+assert(devDB.weapons[3].id == 300 and ForeverWeaponSwapChoice3.shown)
+equipped = 200
+SlashCmdList.FOREVERWEAPONSWAP("3")
+assert(equipped == 300)
+third.set(false)
+assert(not ForeverWeaponSwapChoice3.shown and not ForeverWeaponSwapChoice3.attrs['*type1'] and devDB.weapons[3].id==300)
+function methods:IsVisible() return self.shown end
+function methods:SetSwipeColor(r,g,b,a) self.tint={r,g,b,a} end
+function methods:SetCooldown(start,duration) self.span=duration end
+methods.SetSwipeTexture=noop
+local ms=100000
+C_Item.GetWeaponEnchantInfo=function() return {{hasEnchant=true, enchantType=2, enchantID=999, timeLeft=ms}} end
+local function tick() ForeverWeaponSwapBar.scripts.OnUpdate(nil,1) end
+tick()
+local dial=ForeverWeaponSwapChoice1.enchantDial
+assert(dial.shown and dial.span==100 and dial.tint[2]==0.9)
+ms=30000; tick(); assert(dial.tint[2]==0.52)
+ms=15000; tick(); assert(dial.tint[2]==0.12)
+settings.FWS_enchantDial.set(false); tick(); assert(not dial.shown)
+io.write("PASS: optional third set, secure action removal and dial thresholds\n")

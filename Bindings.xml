@@ -2,4 +2,5 @@
     <Binding name="CLICK ForeverWeaponSwapToggle:LeftButton" category="BINDING_HEADER_FOREVERWEAPONSWAP" />
     <Binding name="CLICK ForeverWeaponSwapChoice1:LeftButton" category="BINDING_HEADER_FOREVERWEAPONSWAP" />
     <Binding name="CLICK ForeverWeaponSwapChoice2:LeftButton" category="BINDING_HEADER_FOREVERWEAPONSWAP" />
+    <Binding name="CLICK ForeverWeaponSwapChoice3:LeftButton" category="BINDING_HEADER_FOREVERWEAPONSWAP" />
 </Bindings>
