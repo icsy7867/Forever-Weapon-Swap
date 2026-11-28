@@ -1,4 +1,4 @@
-# Forever Weapon Swap 1.9.0
+# Forever Weapon Swap 1.9.1
 
 Two compact main-hand/off-hand sets for World of Warcraft: Forever (Interface 16001). No dependencies. Existing 1.0 main-hand choices and position settings are retained.
 
@@ -149,7 +149,7 @@ The optional translucent consumable dial displays the soonest-expiring active ef
 
 ## Changelog
 
-- **1.9.0** — Added an optional third weapon set, configurable consumable countdown dials and a low-charge drawer warning.
+- **1.9.1** — Added an optional third weapon set, configurable consumable countdown dials and a low-charge drawer warning.
 
 
 - **1.9.0** — Documented the contributor update workflow and CurseForge changelog format.
